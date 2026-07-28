@@ -1,6 +1,7 @@
 import { Events } from '../core/EventBus.js';
 import { Dialogue } from './DialogueSystem.js';
 import { GameState } from '../core/GameState.js';
+import { Audio } from './AudioSystem.js';
 
 /**
  * Queues a sequence of world actions and plays them back one at a time,
@@ -16,10 +17,15 @@ import { GameState } from '../core/GameState.js';
  *   { type: 'dialogue', id }              — runs an ordinary dialogue tree
  *   { type: 'flag', key, value }
  *   { type: 'emit', event, payload }
+ *   { type: 'fade', to, seconds, color }  — screen wash toward `to` (0 clear..1 opaque)
+ *   { type: 'sfx', key, volume, rate, variation }
+ *   { type: 'music', key, fade, volume }
+ *   { type: 'anim', entityId, clip }      — plays an existing Animator clip once
  *
  * play() takes a plain array — nothing about a cutscene lives in data/*.js
  * because a cutscene is a sequence of engine actions, not content; the
- * dialogue/flags it drives are.
+ * dialogue/flags it drives are. GameScene.render() draws `Cutscene.fadeAlpha`
+ * on top of everything while a cutscene is active — see `fade` below.
  */
 class CutsceneSystem {
   constructor() {
@@ -28,6 +34,12 @@ class CutsceneSystem {
     this.current = null;
     this.timer = 0;
     this.moving = null;
+    /** Cutscene-driven screen wash, drawn by GameScene.render() via renderer.flash(). */
+    this.fadeAlpha = 0;
+    this.fadeColor = '#07090b';
+    this.fadeFrom = 0;
+    this.fadeTo = 0;
+    this.fadeDuration = 0;
   }
 
   play(steps) {
@@ -50,6 +62,23 @@ class CutsceneSystem {
       case 'emit': Events.emit(step.event, step.payload || {}); this.advance(); break;
       case 'dialogue': Dialogue.start(step.id); break;   // advance() happens in update() once it ends
       case 'moveTo': this.moving = step; break;
+      case 'fade':
+        this.fadeColor = step.color || this.fadeColor;
+        this.fadeFrom = this.fadeAlpha;
+        this.fadeTo = step.to ?? 1;
+        this.fadeDuration = Math.max(0, step.seconds ?? 1);
+        this.timer = this.fadeDuration;
+        if (this.fadeDuration <= 0) this.fadeAlpha = this.fadeTo;   // instant cut, no ramp needed
+        break;
+      case 'sfx':
+        Audio.playSfx(step.key, { volume: step.volume ?? 1, rate: step.rate ?? 1, variation: step.variation ?? 0 });
+        this.advance();
+        break;
+      case 'music':
+        Audio.playMusic(step.key, { fade: step.fade ?? 1.2, volume: step.volume ?? 1 });
+        this.advance();
+        break;
+      case 'anim': break;   // resolved in update(), once `scene` (and its entities) is available
       default: this.advance(); break;   // 'camera' / 'cameraFollow' resolve immediately in update()
     }
   }
@@ -89,6 +118,21 @@ class CutsceneSystem {
         this.advance();
         break;
       }
+      case 'fade':
+        if (this.fadeDuration <= 0) { this.advance(); break; }
+        this.timer -= dt;
+        {
+          const t = Math.min(1, Math.max(0, 1 - this.timer / this.fadeDuration));
+          this.fadeAlpha = this.fadeFrom + (this.fadeTo - this.fadeFrom) * t;
+        }
+        if (this.timer <= 0) { this.fadeAlpha = this.fadeTo; this.advance(); }
+        break;
+      case 'anim': {
+        const entity = scene.entities.find((e) => e.id === this.current.entityId) || (this.current.entityId === 'player' ? scene.player : null);
+        entity?.animator?.play?.(this.current.clip);
+        this.advance();
+        break;
+      }
       default:
         this.advance();
         break;
@@ -101,6 +145,8 @@ class CutsceneSystem {
     this.queue = [];
     this.current = null;
     this.moving = null;
+    this.fadeAlpha = 0;
+    this.fadeDuration = 0;
   }
 }
 

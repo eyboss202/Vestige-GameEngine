@@ -21,6 +21,7 @@ import { t, localised } from '../core/I18n.js';
 import { Survival } from '../systems/SurvivalSystem.js';
 import { ShopScene } from './ShopScene.js';
 import { Cutscene } from '../systems/CutsceneSystem.js';
+import { playIntroCutscene, INTRO_FLAG } from '../cutscenes/intro.js';
 
 /**
  * The world scene: owns the current map, its entities, and the systems that
@@ -44,7 +45,7 @@ export class GameScene extends Scene {
     this.unsubscribe = [];
   }
 
-  enter({ fromSave = false } = {}) {
+  enter({ fromSave = false, fresh = false } = {}) {
     this.loadMap(GameState.currentMap, GameState.spawn, { useSavedPosition: fromSave });
 
     this.unsubscribe.push(
@@ -82,7 +83,14 @@ export class GameScene extends Scene {
           entity.setState('chase');
         }
       }),
+      // cutscenes/intro.js `emit`s this once it hands control back — a small,
+      // harmless example of a cutscene driving something outside itself.
+      Events.on('cutscene:introEnd', () => this.hud.showArea(this.map.displayName)),
     );
+
+    // Played once per save, right after a brand-new game starts — see
+    // cutscenes/intro.js for the full template and step-by-step comments.
+    if (fresh && !GameState.getFlag(INTRO_FLAG, false)) playIntroCutscene();
   }
 
   exit() { for (const off of this.unsubscribe) off(); this.unsubscribe = []; }
@@ -259,6 +267,10 @@ export class GameScene extends Scene {
 
     this.dialogueBox.render(renderer);
     this.hud.render(renderer, this);
+
+    // A cutscene's own fade (see systems/CutsceneSystem.js `fade` step) is
+    // independent of SceneManager's map-transition fade — both can stack.
+    if (Cutscene.fadeAlpha > 0) renderer.flash(Cutscene.fadeColor, Cutscene.fadeAlpha);
 
     if (this.game.debug) this.renderDebug(renderer);
   }

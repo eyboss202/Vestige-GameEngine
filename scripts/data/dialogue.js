@@ -242,4 +242,35 @@ export const DIALOGUES = {
       },
     },
   },
+
+  // Played by cutscenes/intro.js — a chained 3-node inner monologue, run once
+  // as a 'dialogue' step inside the intro Cutscene. No speaker name/portrait
+  // (reads as thought, not speech); demonstrates chaining via `next` so one
+  // Cutscene 'dialogue' step can cover several pages/nodes at once.
+  intro_wake: {
+    start: 'a',
+    nodes: {
+      a: {
+        text: {
+          en: 'PLACEHOLDER INTRO LINE 001. [p=0.3]Cold floor. Quiet, past the hum of the lights.',
+          pt: 'LINHA TEMPORARIA DE ABERTURA 001. [p=0.3]Chao frio. Silencio, para alem do zumbido das luzes.',
+        },
+        next: 'b',
+      },
+      b: {
+        text: {
+          en: 'PLACEHOLDER INTRO LINE 002. [c=#7fe0a8]Something[/c] is still running down here.',
+          pt: 'LINHA TEMPORARIA DE ABERTURA 002. [c=#7fe0a8]Algo[/c] ainda esta a funcionar aqui em baixo.',
+        },
+        next: 'c',
+      },
+      c: {
+        text: {
+          en: 'PLACEHOLDER INTRO LINE 003. Best find out what, before it finds you first.',
+          pt: 'LINHA TEMPORARIA DE ABERTURA 003. Melhor descobrir o que e, antes que te encontre primeiro.',
+        },
+        next: null,
+      },
+    },
+  },
 };

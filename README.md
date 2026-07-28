@@ -53,10 +53,10 @@ All of these are rebindable in **Settings → Controls**. Audio only starts afte
 - **Camera** that trails the player with frame-rate-independent smoothing, clamps to map bounds, shakes on impact and has a zoom hook.
 - **Player controller**: acceleration/friction movement, four-direction animation, sprint with stamina, footstep audio and dust, damage with knockback and i-frames.
 - **Tile maps** from JSON, with a collision grid, layered rendering, triggers, spawn points and per-map ambience. Three maps ship (lab, courtyard, a bunker reached from the courtyard), all connected by working, lockable doors.
-- **Entities**: y-sorted drawing, feet-anchored collision, NPCs that wander, keep a schedule or talk, enemies with a patrol/chase/hurt state machine (plus a ranged variant), item pickups, examinable props, placeable traps, projectiles and thrown weapons.
+- **Entities**: y-sorted drawing, feet-anchored collision, NPCs that wander, keep a schedule or talk, enemies with a patrol/chase/hurt state machine (plus a ranged variant), item pickups, examinable props, placeable traps, projectiles and thrown weapons. Seven enemy archetypes each have their own hand-drawn silhouette (`tools/gen_art.py`) — gaunt husks, a boil-studded mutant, a hunched bone-spiked brute, a spindly stalker, a bloated acid-sac spitter, a many-legged swarmling and a three-eyed boss sentinel — not one sprite recolored at runtime.
 - **Dialogue**: data-driven trees with branching on world flags, player choices, portraits, speaker names, paging, a typewriter with inline `[shake]` `[wave]` `[c=#hex]` `[s=]` `[p=]` tags and a skip. The same machinery doubles as readable notes/logs/recordings and merchant shop openers.
-- **Cutscenes**: a small queued action runner (`wait`/`moveTo`/`camera`/`dialogue`/`flag`/`emit`) that pauses play exactly like a conversation does.
-- **Survival**: hunger and thirst drain over time, punish neglect with HP loss and a movement penalty, and recover on their own once both are healthy; a generic injury list (bleeding, curable) sits alongside them.
+- **Cutscenes**: a queued action runner (`wait`/`moveTo`/`camera`/`cameraFollow`/`dialogue`/`flag`/`emit`/`fade`/`sfx`/`music`/`anim`) that pauses play exactly like a conversation does. `scripts/cutscenes/intro.js` is a fully commented template, played once per save.
+- **Survival**: hunger and thirst drain over time, punish neglect with HP loss and a movement penalty, and recover on their own once both are healthy; a generic injury list (bleeding, curable) sits alongside them. The HUD shows all three as Minecraft-style segmented icons (hearts/rations/droplets, original pixel art) that bounce and flash when a segment changes, not continuous bars.
 - **Inventory**: stacking, categories (supplies/gear/materials/ammo/traps/records/keys/currency), weight (opt-in), use-effects defined per item, a grid UI with a detail pane, rarity-coloured names and icon borders.
 - **Equipment**: weapon/armor/helmet/gloves/boots/accessory slots with passive stat bonuses, read through `GameState.derivedStat()`.
 - **Combat**: melee, pistols, rifles, shotguns, throwables and four trap types, all built on one shared damage/targeting path (`core/Combat.js`) that traps, weapons and enemy attacks all share.
@@ -93,6 +93,7 @@ vestige/
     ├── entities/           base entity, player, enemies, npc, items, props, traps, projectiles
     ├── ui/                 bitmap font, 9-slice, menu list, dialogue box, HUD, inventory, item icons
     ├── scenes/             boot, main menu, settings, save slots, game, pause, inventory, shop
+    ├── cutscenes/          scripted cutscenes (see intro.js) — a template per file, played via systems/CutsceneSystem.js
     └── data/               dialogue trees, item/weapon/enemy/shop/loot definitions, survival tuning
 ```
 

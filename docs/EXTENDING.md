@@ -100,11 +100,15 @@ phases is a subclass that adds `phase1`/`phase2` states and overrides `takeDamag
 is already built in without subclassing: `behavior: 'ranged'` holds at `preferredRange` and fires a
 `Projectile` instead of closing to melee (`Enemy.chaseRanged`).
 
-Variety without new art: every archetype reuses the one placeholder sprite and is told apart by
-data — `tint` (hex, recolors it), `scale` (resizes it), `armor` and `resistances: { melee, ranged }`
-(both reduce incoming damage in `takeDamage`), `unique: true` (just a content marker), and
-`lootTable` (a key into `data/lootTables.js`, rolled by `Enemy.die()`). Drop in a real sprite later
-by adding a `sprite` key — nothing else about an archetype changes.
+Every shipped archetype has its own hand-drawn sprite (`tools/gen_art.py` `draw_husk`/`draw_mutant`/
+`draw_brute`/`draw_stalker`/`draw_spitter`/`draw_swarmling`/`draw_sentinel`) — a genuinely different
+silhouette and palette per archetype, not one sheet recolored at runtime. A brand-new archetype can
+still launch without new art the same way the originals did: point `sprite` at an existing key and
+use `tint` (hex, recolors it) and `scale` (resizes it) to tell it apart, then swap in real art later
+by adding a new `draw_*` function and `sprite` key — nothing else about the archetype changes.
+`armor` and `resistances: { melee, ranged }` both reduce incoming damage in `takeDamage`,
+`unique: true` is just a content marker, and `lootTable` is a key into `data/lootTables.js`, rolled
+by `Enemy.die()`.
 
 ---
 
@@ -253,21 +257,34 @@ richer alert/investigate state can build on later.
 ## Add a cutscene
 
 `systems/CutsceneSystem.js` runs a queue of steps — `wait`, `moveTo`, `camera`, `cameraFollow`,
-`dialogue`, `flag`, `emit` — pausing normal play the same way a conversation does. Fire one from any
-event listener:
+`dialogue`, `flag`, `emit`, `fade`, `sfx`, `music`, `anim` — pausing normal play the same way a
+conversation does. Fire one from any event listener:
 
 ```js
 Cutscene.play([
+  { type: 'fade', to: 1, seconds: 0 },        // cut to black instantly
   { type: 'camera', x: 400, y: 300 },
+  { type: 'fade', to: 0, seconds: 1 },        // ...then lift it
   { type: 'wait', seconds: 1 },
+  { type: 'sfx', key: 'door', volume: 0.6 },
   { type: 'dialogue', id: 'something_happens' },
+  { type: 'anim', entityId: 'player', clip: 'idle_down' },
   { type: 'cameraFollow', entityId: 'player' },
   { type: 'flag', key: 'seen_it', value: true },
 ]);
 ```
 
+`fade` ramps `Cutscene.fadeAlpha` toward `to` (0 clear..1 opaque) over `seconds`, drawn by
+`GameScene.render()` on top of everything (independent of `SceneManager`'s own map-transition fade,
+so both can stack). `sfx`/`music` are thin wrappers over `systems/AudioSystem.js`. `anim` plays an
+existing `Animator` clip on a named entity (or `'player'`) once — it does not invent new clips, so
+the target sprite sheet needs the clip already registered (see `entities/player/Player.js`'s
+`addDirectional` calls).
+
 See the `reveal` trigger type and `trigger:reveal` listener in `GameScene.js` (used by
-`maps/bunker.json`) for a worked example, including the "only once" flag-guard pattern.
+`maps/bunker.json`) for a worked example, including the "only once" flag-guard pattern — and
+`scripts/cutscenes/intro.js` (played once per save from `GameScene.enter()`) for a longer, fully
+commented example exercising every step type above.
 
 ---
 

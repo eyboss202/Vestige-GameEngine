@@ -6,58 +6,122 @@ import { Notifications } from '../systems/NotificationSystem.js';
 import { t } from '../core/I18n.js';
 import { Settings } from '../config/Settings.js';
 import { drawItemIconFor } from './ItemIcon.js';
+import { Assets } from '../core/AssetManager.js';
 
-/** Health, stamina, area title, interaction prompt and toasts. */
+/** Segments per meter row — fixed regardless of the stat's actual max, same
+ *  abstraction Minecraft's hearts use (10 hearts always, however much max
+ *  health a mob has). Each icon covers maxValue/SEGMENTS of the stat. */
+const SEGMENTS = 10;
+const ICON = 8;
+/** Row index into assets/ui/hud_icons_placeholder.png (see tools/gen_art.py
+ *  build_hud_icons — 3 rows x 3 cols of 8x8, cols = empty/half/full). */
+const METER_ROW = { hp: 0, hunger: 1, thirst: 2 };
+
+/** How long a changed segment stays highlighted (bounce + white flash). */
+const FLASH_TIME = 0.35;
+
+/** Splits `value/max` into SEGMENTS discrete empty/half/full states. */
+function segmentsFor(value, max) {
+  const filled = Math.max(0, Math.min(SEGMENTS, (value / max) * SEGMENTS));
+  const states = new Array(SEGMENTS);
+  for (let i = 0; i < SEGMENTS; i++) {
+    const remaining = filled - i;
+    states[i] = remaining >= 1 ? 2 : remaining >= 0.5 ? 1 : 0;   // 0 empty, 1 half, 2 full
+  }
+  return states;
+}
+
+/** Health, stamina, segmented survival meters, area title, interaction
+ *  prompt and toasts. */
 export class HUD {
   constructor() {
     this.areaTitle = null;
     this.areaTimer = 0;
     this.phase = 0;
+
+    // Previous segment states + per-icon flash timers, one set per meter —
+    // see updateMeter(). Lets a heart/ration/droplet visibly pop exactly
+    // when it fills or empties, instead of redrawing statically every frame.
+    this.prevSegments = { hp: null, hunger: null, thirst: null };
+    this.flash = {
+      hp: new Array(SEGMENTS).fill(0),
+      hunger: new Array(SEGMENTS).fill(0),
+      thirst: new Array(SEGMENTS).fill(0),
+    };
   }
 
   showArea(name, duration = 3.2) { this.areaTitle = name; this.areaTimer = duration; }
+
+  /** Diffs one meter's segment states against last frame's and starts a
+   *  flash on whichever icons actually changed. */
+  updateMeter(key, value, max, dt) {
+    const states = segmentsFor(value, max);
+    const prev = this.prevSegments[key];
+    const flash = this.flash[key];
+    for (let i = 0; i < SEGMENTS; i++) {
+      if (prev && prev[i] !== states[i]) flash[i] = FLASH_TIME;
+      else flash[i] = Math.max(0, flash[i] - dt);
+    }
+    this.prevSegments[key] = states;
+    return states;
+  }
 
   update(dt) {
     this.phase += dt;
     if (this.areaTimer > 0) this.areaTimer -= dt;
     Notifications.update(dt);
+
+    const stats = GameState.player;
+    this.hpStates = this.updateMeter('hp', stats.hp, GameState.derivedStat('maxHp'), dt);
+    this.hungerStates = this.updateMeter('hunger', stats.hunger, stats.maxHunger, dt);
+    this.thirstStates = this.updateMeter('thirst', stats.thirst, stats.maxThirst, dt);
+  }
+
+  /** One row of segmented icons. `states`/`flash` are SEGMENTS-long arrays
+   *  from updateMeter(); a flashing icon bounces up and flashes white. */
+  drawMeter(ctx, sheet, row, x, y, states, flash) {
+    if (!sheet) return;
+    for (let i = 0; i < SEGMENTS; i++) {
+      const flashT = flash[i] / FLASH_TIME;
+      const bounce = flashT > 0 ? Math.sin(flashT * Math.PI) * 2 : 0;
+      const dx = x + i * ICON;
+      const dy = y - bounce;
+      ctx.drawImage(sheet, states[i] * ICON, row * ICON, ICON, ICON, dx, Math.round(dy), ICON, ICON);
+      if (flashT > 0) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = flashT * 0.8;
+        ctx.drawImage(sheet, states[i] * ICON, row * ICON, ICON, ICON, dx, Math.round(dy), ICON, ICON);
+        ctx.restore();
+      }
+    }
   }
 
   render(renderer, scene) {
     const ctx = renderer.ctx;
-    const stats = GameState.player;
-    const maxHp = GameState.derivedStat('maxHp');
     const maxStamina = GameState.derivedStat('maxStamina');
+    const stats = GameState.player;
+    const sheet = Assets.image('hud_icons');
 
-    // --- vitals -----------------------------------------------------------
+    // --- stamina (still a continuous bar — it recovers/drains too fast per
+    // frame for segments to read cleanly) --------------------------------
     const x = 8;
     const y = 8;
-    const w = 58;
+    const barW = SEGMENTS * ICON;
     ctx.fillStyle = 'rgba(7,9,11,0.7)';
-    ctx.fillRect(x - 2, y - 2, w + 4, 12);
-    renderer.outline(x - 2, y - 2, w + 4, 12, PALETTE.concreteLight);
-    ctx.fillStyle = '#2a1b18';
-    ctx.fillRect(x, y, w, 4);
-    ctx.fillStyle = stats.hp / maxHp < 0.3 ? PALETTE.danger : '#b8543f';
-    ctx.fillRect(x, y, Math.round(w * (stats.hp / maxHp)), 4);
-    ctx.fillStyle = '#1d2a26';
-    ctx.fillRect(x, y + 5, w, 3);
-    ctx.fillStyle = PALETTE.glow;
-    ctx.fillRect(x, y + 5, Math.round(w * (stats.stamina / maxStamina)), 3);
+    ctx.fillRect(x - 2, y - 2, barW + 4, ICON * 3 + 16);
+    renderer.outline(x - 2, y - 2, barW + 4, ICON * 3 + 16, PALETTE.concreteLight);
 
-    // --- survival meters ----------------------------------------------------
-    const sy = y + 15;
-    ctx.fillStyle = 'rgba(7,9,11,0.7)';
-    ctx.fillRect(x - 2, sy - 2, w + 4, 9);
-    renderer.outline(x - 2, sy - 2, w + 4, 9, PALETTE.concreteLight);
-    ctx.fillStyle = '#2a2318';
-    ctx.fillRect(x, sy, w, 3);
-    ctx.fillStyle = stats.hunger <= 0 ? PALETTE.danger : PALETTE.amber;
-    ctx.fillRect(x, sy, Math.round(w * (stats.hunger / stats.maxHunger)), 3);
-    ctx.fillStyle = '#182430';
-    ctx.fillRect(x, sy + 4, w, 3);
-    ctx.fillStyle = stats.thirst <= 0 ? PALETTE.danger : '#5fa8d8';
-    ctx.fillRect(x, sy + 4, Math.round(w * (stats.thirst / stats.maxThirst)), 3);
+    const staminaY = y;
+    ctx.fillStyle = '#1d2a26';
+    ctx.fillRect(x, staminaY, barW, 3);
+    ctx.fillStyle = PALETTE.glow;
+    ctx.fillRect(x, staminaY, Math.round(barW * (stats.stamina / maxStamina)), 3);
+
+    // --- segmented survival meters: hearts / rations / droplets ----------
+    this.drawMeter(ctx, sheet, METER_ROW.hp, x, y + 6, this.hpStates || segmentsFor(stats.hp, GameState.derivedStat('maxHp')), this.flash.hp);
+    this.drawMeter(ctx, sheet, METER_ROW.hunger, x, y + 6 + ICON + 2, this.hungerStates || segmentsFor(stats.hunger, stats.maxHunger), this.flash.hunger);
+    this.drawMeter(ctx, sheet, METER_ROW.thirst, x, y + 6 + (ICON + 2) * 2, this.thirstStates || segmentsFor(stats.thirst, stats.maxThirst), this.flash.thirst);
 
     // --- area title -------------------------------------------------------
     if (this.areaTimer > 0 && this.areaTitle) {
