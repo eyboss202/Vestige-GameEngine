@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>VESTIGE — foundation build</title>
+  <meta name="description" content="Top-down pixel-art game foundation. Placeholder content only." />
+  <link rel="stylesheet" href="styles/main.css" />
+</head>
+<body>
+  <!-- The visible canvas. Everything is rendered into an off-screen buffer at
+       384x216 and upscaled onto this one, so the pixel grid never breaks. -->
+  <canvas id="game" aria-label="Game screen" role="img"></canvas>
+
+  <!-- Shown until the first key press, because browsers block audio until the
+       page has had a real user gesture. -->
+  <div id="gesture-hint" class="hint">
+    <span class="hint__key">PRESS ANY KEY</span>
+    <span class="hint__sub">sound starts on first input</span>
+  </div>
+
+  <noscript class="hint">This game needs JavaScript enabled.</noscript>
+
+  <script type="module" src="scripts/main.js"></script>
+  <script>
+    // Purely cosmetic: fade the hint out once the player has interacted.
+    const hint = document.getElementById('gesture-hint');
+    const dismiss = () => { hint.classList.add('hint--gone'); };
+    window.addEventListener('keydown', dismiss, { once: true });
+    window.addEventListener('pointerdown', dismiss, { once: true });
+  </script>
+</body>
+</html>

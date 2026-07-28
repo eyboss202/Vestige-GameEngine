@@ -1,0 +1,147 @@
+# Continue Development of My Existing Game
+
+You are continuing development of an existing game project that we have already built together. Before making changes, carefully analyze the entire project structure, architecture, assets, and codebase so that all new features remain consistent with the current design and coding style.
+
+Your goal is not only to implement the requested features but also to improve the overall quality, polish, and uniqueness of the game while maintaining clean, modular, and maintainable code.
+
+## Main Objectives
+
+### 1. Redesign the Player Character
+The current player sprite feels too generic.
+
+Redesign it into something more unique and memorable while preserving readability.
+
+Possible additions include:
+- Glasses
+- Beard
+- Different hairstyle
+- Backpack
+- Torn or detailed clothing
+- Small accessories
+- Better color palette
+- More personality
+
+The player should immediately stand out from enemies.
+
+### 2. Improve Enemy Variety
+
+The enemies currently look too similar.
+
+Create multiple enemy archetypes with visually distinct sprites.
+
+Examples:
+- Larger creatures
+- Smaller creatures
+- Fast creatures
+- Slow creatures
+- Tank enemies
+- Thin and agile enemies
+- Deformed creatures
+- Crawling monsters
+- Mutated infected
+
+Each enemy type should have:
+- A unique sprite
+- Different size
+- Different movement speed
+- Different health
+- Different behavior where appropriate
+
+### 3. Replace Generic Zombies
+
+Avoid creating only traditional zombie variants.
+
+Instead, design grotesque, disturbing, mutated creatures inspired by survival horror.
+
+Examples:
+- Flesh mutations
+- Bone protrusions
+- Parasite-infected bodies
+- Twisted limbs
+- Multi-eyed monsters
+- Bloated infected
+- Creeping abominations
+- Organic horrors
+
+### 4. Improve All Pixel Art
+
+Review every sprite currently in the game.
+
+Where appropriate:
+- Improve shading
+- Improve outlines
+- Increase visual consistency
+- Improve color palettes
+- Add more detail
+- Make animations smoother
+- Preserve the existing pixel art style
+
+### 5. Create a Flexible Cutscene System
+
+Implement a reusable cutscene framework.
+
+The system should support:
+- Character movement
+- Camera movement
+- Dialogue
+- Waiting/timing events
+- Screen fades
+- Sound effects
+- Music changes
+- Animations
+- Triggering game events
+- Easy scripting of sequences
+
+### 6. Create an Intro Cutscene
+
+Create a short introductory cutscene demonstrating:
+- Camera movement
+- Dialogue
+- Character movement
+- Scene transitions
+- Timing
+- Event triggering
+
+Comment the code clearly so it can be used as a template.
+
+### 7. Redesign Survival UI
+
+Replace continuous Health, Hunger, and Thirst bars with segmented indicators inspired by Minecraft's UI.
+
+Examples:
+- Hearts for health
+- Food icons for hunger
+- Water droplets for thirst
+
+Requirements:
+- Smooth updates
+- Animated changes
+- Original pixel-art icons
+- Consistent visual style
+
+Do not copy Minecraft assets.
+
+### 8. General Polish
+
+Improve the project wherever appropriate:
+- Better visual feedback
+- Better animations
+- Better transitions
+- Better particles
+- Better sprite consistency
+- Cleaner code
+- Better organization
+- Performance optimizations
+
+## Important Guidelines
+
+- Do not break existing mechanics.
+- Preserve save compatibility if possible.
+- Keep the architecture modular.
+- Reuse existing systems.
+- Avoid duplicate code.
+- Follow the project's coding conventions.
+- Comment complex sections clearly.
+- Optimize for performance.
+
+Analyze the entire project before making changes. The final result should feel like a significant professional-quality upgrade while remaining fully consistent with the existing game.
