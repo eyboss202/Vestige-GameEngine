@@ -3,10 +3,12 @@
  * and the map loader does the rest. Behaviour hooks (`onDeath`, custom AI
  * states) go here too, so enemy code stays generic.
  *
- * All archetypes below reuse the one placeholder sprite (`enemy_husk`) — see
- * Enemy.js `render()`: `tint` and `scale` are a runtime recolor/resize, not
- * new art, so swapping in a real sprite per archetype later is just adding a
- * `sprite` key here, nothing else changes.
+ * Every archetype below now has its own hand-drawn silhouette (tools/gen_art.py
+ * `draw_husk`/`draw_mutant`/etc — see assets/sprites/enemy_*_placeholder.png),
+ * not a shared sprite with a runtime tint. `scale` still resizes the sheet
+ * (Enemy.js `render()`) so a bigger archetype reads as bigger still; `tint` is
+ * kept where it adds a further colour pop on top of the real art, and dropped
+ * where the sprite alone already reads clearly.
  *
  * `behavior: 'ranged'` archetypes hold at `preferredRange` and fire instead of
  * closing to melee (Enemy.chaseRanged). `resistances: { melee, ranged }` and
@@ -35,48 +37,48 @@ export const ENEMY_ARCHETYPES = {
   },
   mutant: {
     id: 'mutant',
-    sprite: 'enemy_husk',
+    sprite: 'enemy_mutant',
     name: { en: 'Mutant', pt: 'Mutante' },
     hp: 28, speed: 24, chaseSpeed: 34, damage: 6,
     detectRadius: 70, loseRadius: 120, touchCooldown: 1.3, hurtTime: 0.4,
     armor: 1, resistances: { melee: 0.1 },
-    accent: '#c4553f', tint: '#8a2f22', scale: 1.15,
+    accent: '#c4553f', scale: 1.15,
     aura: { radius: 22, color: '#c4553f', intensity: 0.3, flicker: 0.4 },
     lootTable: 'mutant_common',
   },
   brute: {
     id: 'brute',
-    sprite: 'enemy_husk',
+    sprite: 'enemy_brute',
     name: { en: 'Brute', pt: 'Brutamontes' },
     hp: 55, speed: 16, chaseSpeed: 22, damage: 9,
     detectRadius: 60, loseRadius: 100, touchCooldown: 1.6, hurtTime: 0.5,
     armor: 3, resistances: { melee: 0.25, ranged: 0.15 },
-    accent: '#8a4b2a', tint: '#333c40', scale: 1.4,
+    accent: '#8a4b2a', scale: 1.4,
     lootTable: 'mutant_common',
   },
   stalker: {
     id: 'stalker',
-    sprite: 'enemy_husk',
+    sprite: 'enemy_stalker',
     name: { en: 'Stalker', pt: 'Cacador' },
     hp: 8, speed: 34, chaseSpeed: 62, damage: 4,
     /** Short detect radius on purpose — it doesn't notice until it's close, then closes fast. */
     detectRadius: 46, loseRadius: 90, touchCooldown: 0.9, hurtTime: 0.25,
-    accent: '#b285e0', tint: '#2a1b33', scale: 0.9,
+    accent: '#b285e0', scale: 0.9,
     lootTable: 'husk_common',
   },
   spitter: {
     id: 'spitter',
-    sprite: 'enemy_husk',
+    sprite: 'enemy_spitter',
     name: { en: 'Spitter', pt: 'Cuspidor' },
     hp: 14, speed: 20, chaseSpeed: 26, damage: 4,
     detectRadius: 110, loseRadius: 160, touchCooldown: 1.2, hurtTime: 0.3,
     behavior: 'ranged', preferredRange: 100, fireRate: 1.6, projectileSpeed: 130,
-    accent: '#7fe0a8', tint: '#1f3a2c',
+    accent: '#7fe0a8',
     lootTable: 'ranged_common',
   },
   swarmling: {
     id: 'swarmling',
-    sprite: 'enemy_husk',
+    sprite: 'enemy_swarmling',
     name: { en: 'Swarmling', pt: 'Enxameante' },
     hp: 4, speed: 30, chaseSpeed: 58, damage: 2,
     detectRadius: 64, loseRadius: 110, touchCooldown: 0.7, hurtTime: 0.2,
@@ -85,13 +87,13 @@ export const ENEMY_ARCHETYPES = {
   },
   sentinel: {
     id: 'sentinel',
-    sprite: 'enemy_husk',
+    sprite: 'enemy_sentinel',
     name: { en: 'Sentinel', pt: 'Sentinela' },
     hp: 80, speed: 22, chaseSpeed: 40, damage: 10,
     detectRadius: 90, loseRadius: 150, touchCooldown: 1.4, hurtTime: 0.45,
     armor: 2, resistances: { melee: 0.15, ranged: 0.15 },
     unique: true,
-    accent: '#e0a458', tint: '#4a2a5a', scale: 1.6,
+    accent: '#e0a458', scale: 1.6,
     aura: { radius: 34, color: '#e0a458', intensity: 0.5, flicker: 0.15 },
     lootTable: 'elite',
   },
