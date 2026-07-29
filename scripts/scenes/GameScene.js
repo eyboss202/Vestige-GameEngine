@@ -22,6 +22,10 @@ import { Survival } from '../systems/SurvivalSystem.js';
 import { ShopScene } from './ShopScene.js';
 import { Cutscene } from '../systems/CutsceneSystem.js';
 import { playIntroCutscene, INTRO_FLAG } from '../cutscenes/intro.js';
+import { isLocked, tryUnlock, keyName } from '../core/Locks.js';
+import { DeathScene } from './DeathScene.js';
+import { DEATH_TOTAL } from '../entities/player/Player.js';
+import { FLASHLIGHT_DRAIN_PER_SEC, FLASHLIGHT_LOW_BATTERY, FLASHLIGHT_OFF_DARKNESS } from '../config/Constants.js';
 
 /**
  * The world scene: owns the current map, its entities, and the systems that
@@ -42,6 +46,10 @@ export class GameScene extends Scene {
     this.changingMap = false;
     this.deathTimer = 0;
     this.lockedTrigger = null;
+    /** Whether the chase stinger is currently the active music track — see
+     *  updateChaseMusic(). Starts false; the first frame with a chasing
+     *  enemy flips it (and the track) on. */
+    this.chasing = false;
     this.unsubscribe = [];
   }
 
@@ -53,7 +61,16 @@ export class GameScene extends Scene {
         const npc = this.entities.find((e) => e.id === npcId);
         if (npc) npc.talking = false;
       }),
-      Events.on('player:down', () => { this.deathTimer = 1.2; }),
+      // Guarded so a hit landing while the death sting is already playing
+      // (enemies keep attacking a 0-hp player for that last beat) can't keep
+      // pushing the timer back out and stall the You Died screen forever.
+      // Player.startDeath() is itself idempotent for the same reason.
+      Events.on('player:down', () => {
+        if (this.deathTimer > 0) return;
+        this.deathTimer = DEATH_TOTAL;
+        this.player.startDeath();
+        Audio.playSfx('death_sting', { volume: 0.8 });
+      }),
       Events.on('shop:open', ({ npcId }) => {
         const npc = this.entities.find((e) => e.id === npcId);
         if (npc?.shop) this.game.scenes.push(new ShopScene(this.game), { shopId: npc.shop });
@@ -102,6 +119,7 @@ export class GameScene extends Scene {
     GameState.currentMap = mapId;
     this.lockedTrigger = null;
     Cutscene.cancel();   // a cutscene's queued entity ids don't survive a map swap
+    this.chasing = false;   // fresh map, fresh entities — nothing is chasing yet
 
     this.entities = Maps.buildEntities(this.map);
     const spawn = this.map.spawn(spawnName || 'default');
@@ -139,6 +157,60 @@ export class GameScene extends Scene {
 
   // -------------------------------------------------------------- helpers
   solidEntities() { return this.entities.filter((e) => e.solid && !e.dead); }
+
+  /** Flashlight mechanic (prompt2.txt #3/#4/#5) applies only indoors — see
+   *  maps/*.json `ambient.interior`. Outdoor maps never consult this. */
+  interior() { return !!this.map?.ambient?.interior; }
+
+  /** Equipped *and* has something left in the tank. A dead battery behaves
+   *  exactly like not having one equipped at all until it's recharged. */
+  flashlightOn() { return !!GameState.equipment.get('flashlight') && GameState.player.flashlightBattery > 0; }
+
+  /** What render() actually hands to LightingSystem this frame: the map's
+   *  own ambient/lights untouched everywhere except an interior map with no
+   *  working flashlight, where the static map lights are dropped and
+   *  darkness is cranked up so only the player's own small personal light
+   *  (entities/player/Player.js `this.light`, always-on) gets through — see
+   *  prompt2.txt #3. A critically low (but not dead) battery noise-flickers
+   *  between the two instead of cutting cleanly, per prompt2.txt #5. */
+  lightingState() {
+    if (!this.interior()) return { ambient: this.map.ambient, lights: this.map.lights };
+
+    const dark = { ...this.map.ambient, darkness: FLASHLIGHT_OFF_DARKNESS, vignette: Math.min(0.9, (this.map.ambient.vignette ?? 0.45) + 0.3) };
+    if (!this.flashlightOn()) return { ambient: dark, lights: [] };
+
+    const battery = GameState.player.flashlightBattery;
+    if (battery >= FLASHLIGHT_LOW_BATTERY) return { ambient: this.map.ambient, lights: this.map.lights };
+
+    // Dying bulb: a noisy double-sine (same shape LightingSystem's own
+    // per-light flicker uses) decides, frame to frame, whether the beam is
+    // "on" or has dropped out — more dropouts the closer to empty it gets.
+    const t = this.lighting.time;
+    const n = Math.sin(t * 9) * 0.5 + Math.sin(t * 23.7 + 1.3) * 0.5;   // -1..1
+    const failing = 1 - battery / FLASHLIGHT_LOW_BATTERY;                // 0 at the threshold, 1 at empty
+    const dropout = n < -1 + failing * 1.6;
+    return dropout ? { ambient: dark, lights: [] } : { ambient: this.map.ambient, lights: this.map.lights };
+  }
+
+  /** Chase stinger (prompt3.txt #3/#4) — plays only while at least one enemy
+   *  with `chaseMusic !== false` (data/enemies.js, per-archetype toggle) is
+   *  actively in its 'chase' state, replacing whatever room/ambient music
+   *  was playing, and hands that track straight back the instant nothing is
+   *  chasing anymore. AudioSystem has exactly one active music slot and
+   *  playMusic() already no-ops on a repeat call for the key already
+   *  playing, so however many creatures are chasing at once this can never
+   *  double up or restart itself — this only needs to act on the
+   *  true/false *edge*, not every frame. */
+  updateChaseMusic() {
+    const chasing = this.entities.some((e) => e.faction === 'enemy' && e.state === 'chase' && e.def?.chaseMusic !== false);
+    if (chasing === this.chasing) return;
+    this.chasing = chasing;
+    if (chasing) {
+      Audio.playMusic('chase_theme', { fade: 0.4, volume: 0.85 });
+    } else if (this.map.ambient.music) {
+      Audio.playMusic(this.map.ambient.music, { fade: 0.35, volume: 1 });
+    }
+  }
 
   /** Nearest interactable in front of the player, or null. */
   findInteractTarget() {
@@ -178,24 +250,40 @@ export class GameScene extends Scene {
       this.hud.update(dt);
       return;
     }
-    this.player.canMove = true;
-
+    // The collapse animation (Player.startDeath()/DEATH_TOTAL) freezes
+    // everything else the same way Dialogue/Cutscene do above — otherwise
+    // starvation would keep re-emitting player:down and pushing the You
+    // Died screen back indefinitely, and enemies would keep wailing on a
+    // visibly-already-dying player.
     if (this.deathTimer > 0) {
+      this.player.canMove = false;
+      this.player.update(dt, this);
+      this.particles.update(dt, this.camera);
+      this.camera.update(dt);
+      this.hud.update(dt);
       this.deathTimer -= dt;
-      if (this.deathTimer <= 0) this.respawn();
-    } else {
-      // Frozen while the death sting plays — otherwise starvation would keep
-      // re-emitting player:down and pushing the respawn back indefinitely.
-      Survival.update(dt);
+      if (this.deathTimer <= 0) this.die();
+      return;
+    }
+    this.player.canMove = true;
+    Survival.update(dt);
+
+    // Only actually costs anything while it's doing something — equipped,
+    // and somewhere it matters (see `interior()`/`flashlightOn()` below and
+    // render()'s ambient swap, which is the other half of this feature).
+    if (this.interior() && this.flashlightOn()) {
+      GameState.player.flashlightBattery = Math.max(0, GameState.player.flashlightBattery - FLASHLIGHT_DRAIN_PER_SEC * dt);
     }
 
     if (Input.justPressed('pause')) { this.game.scenes.push(new PauseScene(this.game)); return; }
     if (Input.justPressed('inventory')) { this.game.scenes.push(new InventoryScene(this.game)); return; }
     if (Input.justPressed('attack')) this.player.attack(this);
     if (Input.justPressed('throw')) this.player.throwItem(this);
+    if (Input.justPressed('reload')) this.player.reload();
 
     for (const entity of this.entities) entity.update(dt, this);
     this.entities = this.entities.filter((e) => !e.dead);
+    this.updateChaseMusic();
 
     this.interactTarget = this.findInteractTarget();
     if (this.interactTarget && Input.justPressed('interact')) this.interactTarget.interact(this);
@@ -212,12 +300,23 @@ export class GameScene extends Scene {
     const trigger = this.map.triggerAt(this.player.x, this.player.y);
     if (!trigger) return;
     if (trigger.type === 'portal') {
-      // A door can be locked by a world flag — set by whatever future story
-      // event should gate it. Unlocked (the default) always works both ways.
-      if (trigger.requiresFlag && !GameState.getFlag(trigger.requiresFlag, false)) {
+      // A door can be gated by a world flag (set by a story event/cutscene)
+      // and/or by carrying a key item (core/Locks.js — same shape a
+      // Container's `lock` uses). Unlocked (the default) always works both ways.
+      if (isLocked(trigger, trigger.id)) {
+        if (trigger.requiresKey && tryUnlock(trigger, trigger.id)) {
+          Notifications.push(t('notify.unlocked', { name: keyName(trigger) }));
+          Audio.playSfx('door', { volume: 0.55 });
+          this.lockedTrigger = null;
+          this.changeMap(trigger.target, trigger.spawn, trigger.sfx);
+          return;
+        }
         if (this.lockedTrigger !== trigger) {
           this.lockedTrigger = trigger;
-          Notifications.push(trigger.lockedText ? localised(trigger.lockedText) : t('notify.locked'));
+          const text = trigger.lockedText ? localised(trigger.lockedText)
+            : trigger.requiresKey ? t('notify.lockedNeeds', { name: keyName(trigger) })
+            : t('notify.locked');
+          Notifications.push(text);
           Audio.playSfx('ui_back', { volume: 0.6 });
         }
         return;
@@ -229,18 +328,12 @@ export class GameScene extends Scene {
     }
   }
 
-  /** Placeholder failure handling: back to the map's spawn with health restored.
-   *  Swap this for a proper game-over scene once the story needs one. */
-  respawn() {
-    GameState.player.hp = GameState.derivedStat('maxHp');
-    Survival.restoreOnRespawn();
-    this.game.scenes.transition(() => {
-      const spawn = this.map.spawn('default');
-      this.player.x = spawn.x;
-      this.player.y = spawn.y;
-      this.player.vx = this.player.vy = 0;
-      this.camera.snapToTarget();
-    });
+  /** Hp hit 0 and the death-sting freeze (see `deathTimer` above) has played
+   *  out — hand off to the You Died screen. `change()` replaces the whole
+   *  scene stack, so this scene's exit() runs (unsubscribing its listeners)
+   *  and nothing about the failed run keeps simulating underneath it. */
+  die() {
+    this.game.scenes.change(new DeathScene(this.game));
   }
 
   // -------------------------------------------------------------- render
@@ -262,15 +355,30 @@ export class GameScene extends Scene {
     this.particles.render(ctx, this.camera);
     if (this.map.overhead) this.map.renderLayer(ctx, this.camera, 'overhead');
 
-    this.lighting.render(renderer, this.camera, this.map.ambient, this.map.lights);
-    renderer.vignette(this.map.ambient.vignette ?? 0.45);
+    const { ambient, lights } = this.lightingState();
+    this.lighting.render(renderer, this.camera, ambient, lights);
+    renderer.vignette(ambient.vignette ?? 0.45);
 
-    this.dialogueBox.render(renderer);
+    // HUD first, dialogue box on top — the ordinary speech box only ever
+    // sits at the bottom of the screen so this never mattered before, but a
+    // readable's full-page reader (DialogueBox.js `renderReader`) spans
+    // nearly the whole view and needs to sit above the HUD's top-left stat
+    // panel and area title, not under them.
     this.hud.render(renderer, this);
+    this.dialogueBox.render(renderer);
 
     // A cutscene's own fade (see systems/CutsceneSystem.js `fade` step) is
     // independent of SceneManager's map-transition fade — both can stack.
     if (Cutscene.fadeAlpha > 0) renderer.flash(Cutscene.fadeColor, Cutscene.fadeAlpha);
+
+    // Death wash: darkness closes in and a blood-red flash builds across the
+    // whole collapse animation, so the cut to DeathScene at the end of it
+    // reads as "faded to black" rather than an unexplained hard stop.
+    if (this.deathTimer > 0) {
+      const p = 1 - this.deathTimer / DEATH_TOTAL;
+      renderer.vignette(0.35 + p * 0.5);
+      renderer.flash('#2a0808', p * p * 0.8);
+    }
 
     if (this.game.debug) this.renderDebug(renderer);
   }

@@ -14,12 +14,15 @@ function isValidTarget(entity, sourceFaction) {
   return !entity.dead && entity.faction && entity.faction !== sourceFaction && typeof entity.takeDamage === 'function';
 }
 
-/** One-shot hit test against a world-space box (melee swings, bullets). */
+/** One-shot hit test against a world-space box (melee swings, bullets).
+ *  Tested against each candidate's *hurtbox*, not its (smaller, feet-only)
+ *  movement hitbox — see Entity.js getHurtBox() — so a hit that visually
+ *  connects with the sprite always registers. */
 export function hitEntitiesInBox(scene, box, damage, { sourceFaction = 'player', source = null, type = 'melee' } = {}) {
   const hits = [];
   for (const entity of scene.entities) {
-    if (!isValidTarget(entity, sourceFaction) || typeof entity.getBox !== 'function') continue;
-    if (!aabb(box, entity.getBox())) continue;
+    if (!isValidTarget(entity, sourceFaction) || typeof entity.getHurtBox !== 'function') continue;
+    if (!aabb(box, entity.getHurtBox())) continue;
     entity.takeDamage(damage, source || { x: box.x + box.w / 2, y: box.y + box.h / 2 }, scene, type);
     hits.push(entity);
   }

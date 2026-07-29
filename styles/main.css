@@ -63,7 +63,9 @@ body { display: grid; place-items: center; }
 
 .hint__key { color: var(--glow); }
 .hint__sub { color: var(--dim); letter-spacing: 0.12em; font-size: 0.72em; }
-.hint--gone { opacity: 0; }
+/* `animation` keeps re-asserting opacity every frame, which would otherwise
+   fight the transition above and stop this from ever visibly fading. */
+.hint--gone { opacity: 0; animation: none; }
 
 @keyframes breathe {
   0%, 100% { opacity: 0.85; }

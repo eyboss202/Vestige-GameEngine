@@ -32,8 +32,29 @@ export const DIR_ROW = Object.freeze({ down: 0, left: 1, right: 2, up: 3 });
 
 export const SAVE_PREFIX = 'vestige.save.';
 export const SETTINGS_KEY = 'vestige.settings';
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 4;
 export const SAVE_SLOTS = 3;
+
+/** Flat points knocked off the armor pool per hit that connects — see
+ *  Player.takeDamage(). Equipping any armor-slot gear refreshes the pool back
+ *  to its equipped total (core/GameState.js refreshArmor()), so this is the
+ *  only thing that determines how many hits a given loadout survives before
+ *  it stops mitigating damage. */
+export const ARMOR_DEGRADE_PER_HIT = 1;
+
+/** Flashlight/battery tuning (entities/items/ItemDatabase.js `flashlight` +
+ *  `cell_battery`, scenes/GameScene.js interior-darkness gating). One full
+ *  charge lasts FLASHLIGHT_MAX_BATTERY / FLASHLIGHT_DRAIN_PER_SEC seconds of
+ *  actual use — only while equipped *and* on an interior map, never outdoors
+ *  (see maps/*.json `ambient.interior`). */
+export const FLASHLIGHT_MAX_BATTERY = 100;
+export const FLASHLIGHT_DRAIN_PER_SEC = FLASHLIGHT_MAX_BATTERY / 300;   // 5 minutes of use per full charge
+export const FLASHLIGHT_LOW_BATTERY = 20;                              // at/below this, the beam starts to flicker
+export const FLASHLIGHT_RECHARGE_AMOUNT = 40;                          // per cell_battery consumed
+/** Ambient darkness applied to an interior map while the flashlight is off
+ *  or dead — see GameScene.render(). 1 = fully opaque outside the player's
+ *  own small personal light radius (entities/player/Player.js `this.light`). */
+export const FLASHLIGHT_OFF_DARKNESS = 0.96;
 
 /** Seconds of played (non-dialogue) time per in-game day. Drives NPC
  *  schedules (see entities/npc/NPC.js) off GameState.playtime. */

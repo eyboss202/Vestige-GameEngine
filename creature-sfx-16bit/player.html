@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<title>Creature SFX 16-bit — Preview</title>
+<style>
+  :root { --bg:#12121a; --panel:#1c1c28; --line:#2e2e40; --txt:#e8e8f0; --dim:#8a8aa0; --acc:#ff6b4a; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:32px 24px 64px; background:var(--bg); color:var(--txt);
+         font:14px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  h1 { font-size:20px; margin:0 0 4px; letter-spacing:.5px; }
+  .sub { color:var(--dim); margin-bottom:28px; font-size:12px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:2px; color:var(--acc);
+       margin:32px 0 10px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px; }
+  button { display:flex; align-items:center; gap:8px; width:100%; padding:10px 12px;
+           background:var(--panel); color:var(--txt); border:1px solid var(--line);
+           border-radius:6px; cursor:pointer; font:inherit; font-size:12px; text-align:left;
+           transition:.12s; }
+  button:hover { border-color:var(--acc); background:#25253a; }
+  button.on { border-color:var(--acc); background:var(--acc); color:#12121a; }
+  .ico { opacity:.6; }
+  button.on .ico { opacity:1; }
+</style>
+</head>
+<body>
+<h1>Creature SFX — 16-bit</h1>
+<div class="sub">22050 Hz · mono · 16-bit PCM · clica para ouvir</div>
+<div id="app"></div>
+<script>
+const PACK = {
+  "grunts":  ["grunt_small_01","grunt_small_02","grunt_small_03","grunt_mid_01","grunt_mid_02","grunt_mid_03","grunt_big_01","grunt_big_02","grunt_big_03"],
+  "growls":  ["growl_loop_01","growl_loop_02","growl_loop_03"],
+  "roars":   ["roar_mid_01","roar_mid_02","roar_mid_03","roar_big_01","roar_big_02","roar_big_03"],
+  "screams": ["screech_01","screech_02","screech_03","screech_04"],
+  "hurt":    ["hurt_small_01","hurt_small_02","hurt_small_03","hurt_mid_01","hurt_mid_02","hurt_mid_03","hurt_big_01","hurt_big_02","hurt_big_03"],
+  "death":   ["death_mid_01","death_mid_02","death_mid_03","death_big_01","death_big_02","death_big_03"],
+  "idle":    ["chirp_01","chirp_02","chirp_03","chirp_04","hiss_01","hiss_02","hiss_03","alert_01","alert_02","alert_03"],
+  "attack":  ["chomp_01","chomp_02","chomp_03","slime_blob_01","slime_blob_02","slime_blob_03"],
+  "steps":   ["step_small_01","step_small_02","step_small_03","step_big_01","step_big_02","step_big_03"]
+};
+const app = document.getElementById("app");
+let current = null;
+for (const [folder, names] of Object.entries(PACK)) {
+  const h = document.createElement("h2"); h.textContent = folder; app.appendChild(h);
+  const g = document.createElement("div"); g.className = "grid";
+  for (const name of names) {
+    const b = document.createElement("button");
+    b.innerHTML = '<span class="ico">&#9654;</span><span>' + name + '</span>';
+    b.onclick = () => {
+      if (current) { current.a.pause(); current.b.classList.remove("on"); }
+      const a = new Audio(folder + "/" + name + ".wav");
+      a.play();
+      b.classList.add("on");
+      current = { a, b };
+      a.onended = () => b.classList.remove("on");
+    };
+    g.appendChild(b);
+  }
+  app.appendChild(g);
+}
+</script>
+</body>
+</html>

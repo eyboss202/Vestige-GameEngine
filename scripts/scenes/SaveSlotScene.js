@@ -20,6 +20,7 @@ export class SaveSlotScene extends Scene {
   enter({ mode = 'load', onLoaded = null } = {}) {
     this.mode = mode;
     this.onLoaded = onLoaded;
+    this.confirmSlot = null;
     this.refresh();
   }
 
@@ -38,9 +39,10 @@ export class SaveSlotScene extends Scene {
 
   pick(slot) {
     if (this.mode === 'save') {
-      Save.save(slot.slot);
-      Notifications.push(t('notify.saved'));
-      this.game.scenes.pop();
+      // An occupied slot needs a yes/no beat before it's overwritten; an
+      // empty one (nothing to lose) writes immediately, same as before.
+      if (!slot.empty) { this.confirm(slot); return; }
+      this.write(slot);
       return;
     }
     if (Save.load(slot.slot)) {
@@ -49,7 +51,27 @@ export class SaveSlotScene extends Scene {
     }
   }
 
-  update(dt) { this.menu.update(dt); }
+  /** Swaps the slot list for a small yes/no menu instead of writing straight
+   *  away — see render()/update(), which dispatch to whichever is active. */
+  confirm(slot) {
+    this.confirmSlot = slot;
+    this.confirmMenu = new MenuList([
+      { label: t('common.yes'), onSelect: () => this.write(slot) },
+      { label: t('common.no'), onSelect: () => { this.confirmSlot = null; } },
+    ], { spacing: 18, onCancel: () => { this.confirmSlot = null; } });
+  }
+
+  write(slot) {
+    Save.save(slot.slot);
+    Notifications.push(t('notify.savedSlot', { slot: slot.slot + 1 }));
+    this.confirmSlot = null;
+    this.game.scenes.pop();
+  }
+
+  update(dt) {
+    if (this.confirmSlot) this.confirmMenu.update(dt);
+    else this.menu.update(dt);
+  }
 
   render(renderer) {
     const ctx = renderer.ctx;
@@ -61,8 +83,13 @@ export class SaveSlotScene extends Scene {
     const x = (VIEW_W - w) / 2;
     const y = (VIEW_H - h) / 2;
     panel(ctx, x, y, w, h);
-    Font.draw(ctx, t('menu.selectSlot'), x + 12, y + 10, { color: PALETTE.glow });
-    this.menu.render(renderer, x + 22, y + 30, { width: w - 44 });
+    if (this.confirmSlot) {
+      Font.draw(ctx, t('menu.overwriteConfirm', { slot: this.confirmSlot.slot + 1 }), x + 12, y + 10, { color: PALETTE.amber });
+      this.confirmMenu.render(renderer, x + 22, y + 30, { width: w - 44 });
+    } else {
+      Font.draw(ctx, t('menu.selectSlot'), x + 12, y + 10, { color: PALETTE.glow });
+      this.menu.render(renderer, x + 22, y + 30, { width: w - 44 });
+    }
   }
 }
 

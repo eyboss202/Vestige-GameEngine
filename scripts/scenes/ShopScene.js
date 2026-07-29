@@ -86,6 +86,12 @@ export class ShopScene extends Scene {
   sell(itemId) {
     const def = getItem(itemId);
     const price = priceFor(this.shop, itemId, false, def?.value ?? 0);
+    // An equipped item still lives in the bag (systems/InventorySystem.js
+    // Equipment) — unequip it first so a sale never leaves GameState.equipment
+    // pointing at an item the player no longer owns.
+    if (def?.slot && GameState.equipment.get(def.slot) === itemId) {
+      GameState.equipment.unequip(GameState.inventory, def.slot);
+    }
     GameState.inventory.remove(itemId, 1);
     GameState.inventory.add(CURRENCY, price);
     Audio.playSfx('pickup');

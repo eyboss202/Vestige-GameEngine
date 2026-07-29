@@ -113,7 +113,9 @@ export class SettingsScene extends Scene {
     items.push({ label: t('settings.reset'), onSelect: () => { Settings.resetKeybindings(); this.buildKeys(); } });
     items.push({ label: t('menu.back'), onSelect: () => this.buildMain() });
     const index = this.menu?.index ?? 0;
-    this.menu = new MenuList(items, { spacing: 13, onCancel: () => this.buildMain() });
+    // Tighter than the main list's 13px — BINDABLE has grown past what 13px
+    // rows fit in a 216px-tall view; see render()'s matching headerPad.
+    this.menu = new MenuList(items, { spacing: 11, onCancel: () => this.buildMain() });
     this.menu.index = Math.min(index, items.length - 1);
   }
 
@@ -140,13 +142,16 @@ export class SettingsScene extends Scene {
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
 
     const w = 250;
-    const h = this.menu.height + 46;
+    // The keys list (BINDABLE) has more rows than the main option list, so it
+    // gets thinner chrome instead of overflowing the 216px-tall view.
+    const headerPad = this.mode === 'keys' ? 30 : 46;
+    const h = this.menu.height + headerPad;
     const x = (VIEW_W - w) / 2;
-    const y = Math.max(8, (VIEW_H - h) / 2);
+    const y = Math.max(4, (VIEW_H - h) / 2);
     panel(ctx, x, y, w, h);
     Font.draw(ctx, this.mode === 'keys' ? t('settings.keybinds') : t('settings.title'), x + 12, y + 10, { color: PALETTE.glow });
     this.menu.render(renderer, x + 22, y + 28, { width: w - 44 });
-    Font.draw(ctx, t('settings.hint'), VIEW_W / 2, y + h + 4, { color: PALETTE.dim, align: 'center' });
+    if (y + h + 14 <= VIEW_H) Font.draw(ctx, t('settings.hint'), VIEW_W / 2, y + h + 4, { color: PALETTE.dim, align: 'center' });
 
     if (this.capturing) {
       const bw = 150;

@@ -15,11 +15,13 @@ export const DEFAULT_BINDINGS = Object.freeze({
   pause:    ['Escape', 'KeyP'],
   attack:   ['KeyJ'],
   throw:    ['KeyK'],
+  reload:   ['KeyR'],
+  drop:     ['KeyG'],
 });
 
 /** Order + labels used by the rebinding screen. */
 export const BINDABLE = Object.freeze([
-  'up', 'down', 'left', 'right', 'confirm', 'cancel', 'interact', 'sprint', 'inventory', 'pause', 'attack', 'throw',
+  'up', 'down', 'left', 'right', 'confirm', 'cancel', 'interact', 'sprint', 'inventory', 'pause', 'attack', 'throw', 'reload', 'drop',
 ]);
 
 /** Human-readable key names for the settings UI. */

@@ -66,6 +66,9 @@ class DialogueSystem {
   get speaker() { return localised(this.node?.speaker, ''); }
   get portrait() { return this.node?.portrait ?? null; }
   get text() { return localised(this.node?.text, ''); }
+  /** 'read' for a book-styled full page (see ItemDatabase.js `readable()`);
+   *  null/undefined for an ordinary conversation. */
+  get mode() { return this.context?.mode ?? null; }
 
   /** Choices the player currently meets the requirements for. */
   get choices() {

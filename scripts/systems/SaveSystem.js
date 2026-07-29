@@ -73,6 +73,21 @@ class SaveSystem {
           }
           break;
         }
+        case 2: {
+          // v3 added weapon magazines, item durability, dropped world items and
+          // container loot tracking. GameState.deserialize() already defaults
+          // anything missing (reset first, then merge), so nothing to backfill.
+          break;
+        }
+        case 3: {
+          // v4 added the flashlight's battery pool and its equip slot.
+          // GameState.deserialize() already defaults anything missing, and
+          // Equipment.deserialize() iterates the *current* EQUIP_SLOTS list
+          // (not whatever a v3 save's `equipment` object happens to have
+          // keys for), so an old save just gets flashlightBattery: 100 and
+          // slots.flashlight: null for free — nothing to backfill here either.
+          break;
+        }
         default: break;
       }
       version++;

@@ -8,6 +8,7 @@ import { Assets } from '../core/AssetManager.js';
 import { Settings } from '../config/Settings.js';
 import { localised } from '../core/I18n.js';
 import { Events } from '../core/EventBus.js';
+import { getItem } from '../entities/items/ItemDatabase.js';
 
 /** Columns of assets/ui/portraits_placeholder.png. */
 export const PORTRAIT_INDEX = { doctor: 0, survivor: 1, wanderer: 2, husk: 3 };
@@ -16,6 +17,12 @@ const BOX_H = 62;
 const MARGIN = 8;
 const LINES_PER_PAGE = 3;
 const BASE_CPS = 42;              // characters per second at speed 1
+
+/** Book-styled full page for readables (letters/notes/diaries/...) instead
+ *  of the bottom speech box — see ItemDatabase.js `readable()`. */
+const READ_MARGIN = 20;
+const READ_LINES_PER_PAGE = 10;
+const READ_HEADER_H = 16;
 
 /**
  * Renders whatever DialogueSystem currently has active: typewriter text with
@@ -36,11 +43,11 @@ export class DialogueBox {
   }
 
   get active() { return Dialogue.active; }
+  get reading() { return this.active && Dialogue.mode === 'read'; }
 
   /** Lays a parsed string out into pages of lines, keeping per-char styling. */
-  layout(text) {
+  layout(text, maxChars, linesPerPage) {
     const parsed = parseRichText(text);
-    const maxChars = Math.floor((VIEW_W - MARGIN * 2 - 16 - (Dialogue.portrait ? 40 : 0)) / Font.charWidth());
     const lines = [];
     let line = [];
     let word = [];
@@ -58,12 +65,18 @@ export class DialogueBox {
     if (line.length) lines.push(line);
 
     const pages = [];
-    for (let i = 0; i < lines.length; i += LINES_PER_PAGE) pages.push(lines.slice(i, i + LINES_PER_PAGE));
+    for (let i = 0; i < lines.length; i += linesPerPage) pages.push(lines.slice(i, i + linesPerPage));
     return pages.length ? pages : [[]];
   }
 
   reset() {
-    this.pages = this.layout(Dialogue.text);
+    if (this.reading) {
+      const maxChars = Math.floor((VIEW_W - READ_MARGIN * 2 - 8) / Font.charWidth());
+      this.pages = this.layout(Dialogue.text, maxChars, READ_LINES_PER_PAGE);
+    } else {
+      const maxChars = Math.floor((VIEW_W - MARGIN * 2 - 16 - (Dialogue.portrait ? 40 : 0)) / Font.charWidth());
+      this.pages = this.layout(Dialogue.text, maxChars, LINES_PER_PAGE);
+    }
     this.page = 0;
     this.revealed = 0;
     this.timer = 0;
@@ -93,6 +106,10 @@ export class DialogueBox {
     if (key !== this.nodeKey) { this.nodeKey = key; this.reset(); }
 
     const choices = Dialogue.choices;
+
+    // A book can be closed early with cancel — there's nothing to choose or
+    // branch on, just pages to stop reading.
+    if (this.reading && Input.justPressed('cancel')) { Dialogue.end(); return; }
 
     if (!this.pageDone) {
       if (this.pauseTimer > 0) this.pauseTimer -= dt;
@@ -130,13 +147,16 @@ export class DialogueBox {
     }
 
     if (Input.justPressed('confirm') || Input.justPressed('interact')) {
-      if (this.page < this.pages.length - 1) { this.page++; this.revealed = 0; Audio.playSfx('ui_move', { volume: 0.4 }); }
-      else Dialogue.advance();
+      if (this.page < this.pages.length - 1) {
+        this.page++; this.revealed = 0;
+        Audio.playSfx(this.reading ? 'page_turn' : 'ui_move', { volume: this.reading ? 0.5 : 0.4 });
+      } else Dialogue.advance();
     }
   }
 
   render(renderer) {
     if (!this.active) return;
+    if (this.reading) { this.renderReader(renderer); return; }
     const ctx = renderer.ctx;
     const choices = Dialogue.choices;
     const boxY = VIEW_H - BOX_H - MARGIN;
@@ -214,6 +234,64 @@ export class DialogueBox {
         ctx.closePath();
         ctx.fill();
       }
+    }
+  }
+
+  /** Full-page book styling for readables: a centred page instead of the
+   *  bottom speech box, a title bar (the item's own name), a page counter,
+   *  and no portrait/speaker/choices — a readable never branches. */
+  renderReader(renderer) {
+    const ctx = renderer.ctx;
+    const x = READ_MARGIN;
+    const y = READ_MARGIN;
+    const w = VIEW_W - READ_MARGIN * 2;
+    const h = VIEW_H - READ_MARGIN * 2;
+
+    ctx.fillStyle = 'rgba(7,9,11,0.72)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    panel(ctx, x, y, w, h);
+
+    const def = getItem(Dialogue.context?.itemId);
+    const title = def ? localised(def.name) : '';
+    if (title) {
+      Font.draw(ctx, title.toUpperCase(), x + 10, y + 8, { color: PALETTE.glow });
+      ctx.fillStyle = PALETTE.concreteLight;
+      ctx.fillRect(x + 9, y + 8 + Font.lineHeight(), w - 18, 1);
+    }
+
+    const textX = x + 10;
+    const textY = y + READ_HEADER_H + 10;
+    let index = 0;
+    const lines = this.pages[this.page] || [];
+    lines.forEach((line, li) => {
+      let cx = textX;
+      const cy = textY + li * Font.lineHeight();
+      for (const entry of line) {
+        if (index >= this.revealed) { index++; cx += Font.charWidth(); continue; }
+        let dx = 0;
+        let dy = 0;
+        if (entry.shake) { dx = (Math.random() * 2 - 1); dy = (Math.random() * 2 - 1); }
+        if (entry.wave) dy += Math.sin(this.phase * 6 + index * 0.6) * 1.5;
+        Font.drawChar(ctx, entry.ch, cx + dx + 1, cy + dy + 1, 'rgba(0,0,0,0.75)');
+        Font.drawChar(ctx, entry.ch, cx + dx, cy + dy, entry.color || PALETTE.bone);
+        cx += Font.charWidth();
+        index++;
+      }
+    });
+
+    if (this.pages.length > 1) {
+      Font.draw(ctx, `${this.page + 1}/${this.pages.length}`, x + w - 10, y + h - 14, { color: PALETTE.dim, align: 'right' });
+    }
+    if (this.pageDone && Math.sin(this.phase * 7) > 0) {
+      const cx = x + w - 14;
+      const cy = y + h - 14;
+      ctx.fillStyle = PALETTE.glow;
+      ctx.beginPath();
+      ctx.moveTo(cx - 20, cy);
+      ctx.lineTo(cx - 14, cy);
+      ctx.lineTo(cx - 17, cy + 4);
+      ctx.closePath();
+      ctx.fill();
     }
   }
 }

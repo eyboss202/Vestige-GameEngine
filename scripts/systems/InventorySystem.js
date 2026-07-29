@@ -16,8 +16,20 @@ export class Inventory {
   get count() { return this.slots.length; }
   isFull() { return this.slots.length >= this.capacity; }
 
+  /** First slot holding this item, or null — a stack reference, not "the"
+   *  total (an item can occupy several slots once it outgrows one stack's
+   *  stackSize; see quantity() below). */
   find(itemId) { return this.slots.find((s) => s.itemId === itemId) || null; }
-  quantity(itemId) { return this.find(itemId)?.qty ?? 0; }
+
+  /** Total held across every stack — add()/remove() already spill into (and
+   *  deplete from) more than one slot once an item passes its stackSize, so
+   *  this has to sum all of them. Reading only the first slot used to under-
+   *  report the true amount (and could look like it never changed after a
+   *  remove(), since remove() empties slots back-to-front while this read
+   *  the front) the moment a player carried more of something than fit in
+   *  one stack — visible in reload's ammo reserve, the HUD ammo readout and
+   *  ShopScene's currency balance, all of which read this. */
+  quantity(itemId) { return this.slots.reduce((sum, s) => (s.itemId === itemId ? sum + s.qty : sum), 0); }
   has(itemId, qty = 1) { return this.quantity(itemId) >= qty; }
 
   /** @returns the amount actually added (0 when the bag is full or too heavy). */
@@ -72,7 +84,7 @@ export class Inventory {
   use(itemId, context) {
     const def = getItem(itemId);
     if (!def || !this.has(itemId)) return false;
-    if (def.onUse?.(context) === false) return false;   // item refused (e.g. full HP)
+    if (def.onUse?.({ ...context, itemId }) === false) return false;   // item refused (e.g. full HP)
     if (def.consumable) this.remove(itemId, 1);
     Events.emit('inventory:used', { itemId });
     return true;
@@ -97,13 +109,19 @@ export class Inventory {
   }
 }
 
-/** Body slots an equippable item's `slot` field can target. */
-export const EQUIP_SLOTS = ['weapon', 'armor', 'helmet', 'gloves', 'boots', 'accessory'];
+/** Body slots an equippable item's `slot` field can target. `flashlight` has
+ *  no `bonus` stat like the others — equipping it just gates the interior
+ *  darkness/battery-drain checks in GameScene.js (core/GameState.js
+ *  `player.flashlightBattery`), same as a weapon slot gates being able to
+ *  attack rather than granting a passive bonus. */
+export const EQUIP_SLOTS = ['weapon', 'armor', 'helmet', 'gloves', 'boots', 'accessory', 'flashlight'];
 
 /**
- * What the player is wearing/wielding. Equipping moves the item out of the
- * bag into a slot; unequipping returns it (if there's room). Stat bonuses are
- * read back out through GameState.derivedStat(), not stored here.
+ * What the player is wearing/wielding. Equipping just flags an item already
+ * in the bag as "the one in that slot" — it never leaves Inventory.slots, so
+ * it keeps showing up (with an "E" marker — see ui/InventoryUI.js) and can be
+ * examined/dropped like anything else. Stat bonuses are read back out through
+ * GameState.derivedStat(), not stored here.
  */
 export class Equipment {
   constructor() {
@@ -119,19 +137,15 @@ export class Equipment {
     if (!def?.slot || !EQUIP_SLOTS.includes(def.slot) || !inventory.has(itemId)) return false;
     const previous = this.slots[def.slot];
     if (previous === itemId) return false;
-    if (inventory.remove(itemId, 1) <= 0) return false;
-    if (previous) inventory.add(previous, 1);   // swap the old one back into the bag
     this.slots[def.slot] = itemId;
     Events.emit('equipment:changed', { slot: def.slot, itemId });
     return true;
   }
 
-  /** @returns true on success. Fails if the bag has no room to take the item back. */
+  /** @returns true on success. Fails if nothing's equipped in that slot. */
   unequip(inventory, slot) {
     const itemId = this.slots[slot];
     if (!itemId) return false;
-    if (inventory.isFull()) return false;
-    inventory.add(itemId, 1);
     this.slots[slot] = null;
     Events.emit('equipment:changed', { slot, itemId: null });
     return true;

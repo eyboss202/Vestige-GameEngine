@@ -8,6 +8,7 @@ import { rollLoot } from '../../data/lootTables.js';
 import { ItemPickup } from '../items/ItemPickup.js';
 import { Projectile } from '../Projectile.js';
 import { Audio } from '../../systems/AudioSystem.js';
+import { GameState } from '../../core/GameState.js';
 
 let nextDropId = 1;
 /** How close a melee enemy closes in before it stops — just inside the
@@ -29,6 +30,15 @@ export class Enemy extends Entity {
     this.faction = 'enemy';
     this.solid = true;
     this.hitbox = { w: 10, h: 7, ox: 0, oy: 0 };
+    // Hurtbox matches the archetype's actual drawn silhouette (data/enemies.js
+    // `hurtboxW`, measured from the sprite art, full sprite height since every
+    // archetype's art reaches both edges of the 16x24 canvas in at least one
+    // facing) scaled by the archetype's render `scale` (Enemy.render() draws
+    // the sprite at spriteW/H * scale) — so a Brute or Sentinel's actually-
+    // bigger silhouette is exactly as much easier to hit as it looks, and a
+    // Swarmling's smaller one isn't hit through empty air.
+    const scale = this.def.scale ?? 1;
+    this.hurtbox = { w: (this.def.hurtboxW ?? 10) * scale, h: this.spriteH * scale, ox: 0, oy: 0 };
 
     this.patrolPath = patrol;
     this.patrolIndex = 0;
@@ -38,18 +48,69 @@ export class Enemy extends Entity {
     this.fireCooldown = 0;
     this.home = { x, y };
 
+    /** Sound key prefix into tools/gen_audio.py's MONSTER_VOICES — defaults to
+     *  the archetype id, which is also the manifest.js key prefix, so a new
+     *  archetype gets working idle/alert/attack/death cues for free the
+     *  moment its row exists in both places. */
+    this.voice = this.def.voice ?? archetype;
+    this.voiceTimer = 2 + Math.random() * 4;
+    /** Footstep cadence while patrol/chase/return actually moves it — see
+     *  moveToward(). Starts randomised so a room of enemies doesn't step in
+     *  lockstep the instant they all start walking on the same frame. */
+    this.stepTimer = Math.random() * 0.4;
+    /** Last variant index played per shared sound pool (config/manifest.js
+     *  SIZE_VOICE_SOUNDS) — see playSizeVoice(), which avoids repeating it. */
+    this.lastVariant = {};
+
     this.animator = new Animator(Assets.image(this.def.sprite), 16, 24)
       .addDirectional('idle', [0], 1)
       .addDirectional('walk', [0, 1, 2, 3], 6);
     this.animator.play('idle_down');
 
     this.aura = this.def.aura ? { ...this.def.aura, x, y } : null;
+
+    /** World flag that records this enemy as killed, so it stays dead across
+     *  map transitions and reloads — same pattern as ItemPickup's pickup flag.
+     *  Checked last so a kill recorded before this session still wins over
+     *  every setup above. */
+    this.killFlag = `killed:${this.id}`;
+    if (GameState.getFlag(this.killFlag, false)) this.dead = true;
   }
 
-  setState(state, duration = 0) {
+  /** Plays one of this archetype's four voice cues (idle/alert/attack/death
+   *  — real recordings from creature-sfx-16bit/, see tools/gen_audio.py's
+   *  mapping comment) at its own pitch (data/enemies.js `voicePitch`), plus
+   *  a touch of random variation per play so even a single reused sample
+   *  never sounds like a loop. */
+  playVoice(cue, listener, opts) {
+    return Audio.playPositional(`${this.voice}_${cue}`, this, listener, {
+      rate: this.def.voicePitch ?? 1, variation: 0.06, ...opts,
+    });
+  }
+
+  /** Plays a random variant from a shared-by-size-class pool (hurt reactions,
+   *  footsteps — config/manifest.js SIZE_VOICE_SOUNDS, `count` variants named
+   *  `${pool}_1`.. `${pool}_${count}`), never repeating whichever variant it
+   *  played last from that same pool — the exact "randomize, avoid the last
+   *  one" algorithm creature-sfx-16bit/README.md itself suggests. Unlike
+   *  playVoice() these aren't species-specific, so no per-archetype pitch. */
+  playSizeVoice(pool, count, listener, opts) {
+    let i = 1 + Math.floor(Math.random() * count);
+    if (count > 1 && i === this.lastVariant[pool]) i = (i % count) + 1;
+    this.lastVariant[pool] = i;
+    return Audio.playPositional(`${pool}_${i}`, this, listener, { variation: 0.05, ...opts });
+  }
+
+  /** @param listener the player, only needed when this transition might play
+   *  the "just noticed you" alert cue (entering 'chase' from a passive state). */
+  setState(state, duration = 0, listener = null) {
     if (this.state === state) return;
+    const wasPassive = this.state !== 'chase' && this.state !== 'hurt';
     this.state = state;
     this.stateTimer = duration;
+    if (state === 'chase' && wasPassive) {
+      this.playVoice('alert', listener, { volume: 0.75, maxDistance: 260 });
+    }
     Events.emit('enemy:state', { id: this.id, state });
   }
 
@@ -63,6 +124,22 @@ export class Enemy extends Entity {
     const player = scene.player;
     const distToPlayer = player ? distance(this, player) : Infinity;
 
+    // Positional idle voice (breathing/growls) — plays in any state but
+    // 'hurt', on its own randomised timer, so a room full of enemies doesn't
+    // growl in lockstep. playPositional() already no-ops once out of range.
+    // While actively chasing, the same cue fires much more often and a
+    // touch sharper (rate bump) — continuous, rising pressure instead of the
+    // same lazy ambient cadence it uses when nothing's wrong yet.
+    const chasing = this.state === 'chase';
+    this.voiceTimer -= dt;
+    if (this.voiceTimer <= 0 && this.state !== 'hurt') {
+      this.playVoice('idle', player, {
+        volume: chasing ? 0.7 : 0.55, maxDistance: chasing ? 240 : 200,
+        rate: (this.def.voicePitch ?? 1) * (chasing ? 1.1 : 1),
+      });
+      this.voiceTimer = chasing ? 1.1 + Math.random() * 1.3 : 3 + Math.random() * 5;
+    }
+
     switch (this.state) {
       case 'hurt':
         if (this.stateTimer <= 0) this.setState(this.patrolPath ? 'patrol' : 'idle');
@@ -70,12 +147,12 @@ export class Enemy extends Entity {
 
       case 'idle':
         this.animator.play(`idle_${this.facing}`);
-        if (distToPlayer < this.def.detectRadius) this.setState('chase');
+        if (distToPlayer < this.def.detectRadius) this.setState('chase', 0, player);
         break;
 
       case 'patrol':
         this.followPath(dt, scene);
-        if (distToPlayer < this.def.detectRadius) this.setState('chase');
+        if (distToPlayer < this.def.detectRadius) this.setState('chase', 0, player);
         break;
 
       case 'chase':
@@ -89,7 +166,10 @@ export class Enemy extends Entity {
           if (distToPlayer > MELEE_STOP_DISTANCE) this.moveToward(player.x, player.y, this.def.chaseSpeed, dt, scene);
           else this.facePlayer(player);
           if (distToPlayer < 12 && this.touchTimer <= 0) {
-            if (player.takeDamage(this.def.damage, this, scene)) this.touchTimer = this.def.touchCooldown;
+            if (player.takeDamage(this.def.damage, this, scene)) {
+              this.touchTimer = this.def.touchCooldown;
+              this.playVoice('attack', player, { volume: 0.85, maxDistance: 200 });
+            }
           }
         }
         break;
@@ -97,7 +177,7 @@ export class Enemy extends Entity {
       case 'return':
         this.moveToward(this.home.x, this.home.y, this.def.speed, dt, scene);
         if (distance(this, this.home) < 4) this.setState('idle');
-        if (distToPlayer < this.def.detectRadius) this.setState('chase');
+        if (distToPlayer < this.def.detectRadius) this.setState('chase', 0, player);
         break;
       default:
         break;
@@ -137,7 +217,7 @@ export class Enemy extends Entity {
         x: this.x, y: this.y - 10, angle, speed: this.def.projectileSpeed ?? 150,
         damage: this.def.damage, faction: 'enemy', life: 1.6, color: this.def.accent,
       }));
-      Audio.playSfx('attack_gun', { volume: 0.35, rate: 0.75, variation: 0.05 });
+      this.playVoice('attack', player, { volume: 0.8, maxDistance: 220 });
     }
   }
 
@@ -162,6 +242,17 @@ export class Enemy extends Entity {
     if (result.hitX && Math.abs(dy) < 1) this.y += (Math.random() < 0.5 ? -1 : 1) * speed * dt;
     if (result.hitY && Math.abs(dx) < 1) this.x += (Math.random() < 0.5 ? -1 : 1) * speed * dt;
     this.animator.play(`walk_${this.facing}`);
+
+    // Continuous footsteps while actually moving (patrol/chase/return) — the
+    // pursuit-pressure cue prompt2.txt #1 asks for: something audibly
+    // closing in before it's on screen. Cadence scales with speed, same
+    // "distance per step" feel Player.js's own footsteps() uses.
+    this.stepTimer -= dt;
+    if (this.stepTimer <= 0) {
+      this.stepTimer = 90 / Math.max(1, speed);
+      const tier = this.def.sizeClass === 'small' ? 'small' : 'big';   // 'mid' walks heavy, not tiny
+      this.playSizeVoice(`step_${tier}`, 3, scene.player, { volume: 0.4, maxDistance: 150 });
+    }
   }
 
   takeDamage(amount, source, scene, type = 'melee') {
@@ -172,11 +263,18 @@ export class Enemy extends Entity {
     this.flashTimer = 0.2;
     scene?.particles.burst(this.x, this.y - 10, 8, { color: this.def.accent, speed: 40, life: 0.4, gravity: 50 });
     if (this.hp <= 0) { this.die(scene); return; }
+    this.playSizeVoice(`hurt_${this.def.sizeClass ?? 'mid'}`, 3, scene?.player, { volume: 0.65, maxDistance: 180 });
     this.setState('hurt', this.def.hurtTime);
     if (source) {
+      // Routed through moveAndCollide() like every other move on this class
+      // (moveToward()) — a raw this.x/this.y += used to skip wall/solid
+      // checks entirely, so a hit landing while backed against a wall could
+      // knock an enemy straight through it.
       const angle = Math.atan2(this.y - source.y, this.x - source.x);
-      this.x += Math.cos(angle) * 4;
-      this.y += Math.sin(angle) * 4;
+      const kx = Math.cos(angle) * 4;
+      const ky = Math.sin(angle) * 4;
+      if (scene) moveAndCollide(this, kx, ky, scene.map, scene.solidEntities());
+      else { this.x += kx; this.y += ky; }
     }
   }
 
@@ -224,6 +322,8 @@ export class Enemy extends Entity {
 
   die(scene) {
     this.dead = true;
+    GameState.setFlag(this.killFlag, true);
+    this.playVoice('death', scene?.player, { volume: 0.9, maxDistance: 260 });
     scene?.particles.burst(this.x, this.y - 10, 20, { color: this.def.accent, speed: 55, life: 0.7, gravity: 30 });
     if (scene && this.def.lootTable) {
       for (const drop of rollLoot(this.def.lootTable)) {

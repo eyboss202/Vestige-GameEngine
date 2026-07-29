@@ -48,7 +48,9 @@ class AudioSystem {
     this.sfxBus.gain.value = Settings.get('sfxVolume');
   }
 
-  playSfx(key, { volume = 1, rate = 1, variation = 0 } = {}) {
+  /** @param pan -1 (full left) .. 1 (full right); 0 (default) skips the
+   *  panner node entirely so ordinary UI/sfx calls are unaffected. */
+  playSfx(key, { volume = 1, rate = 1, variation = 0, pan = 0 } = {}) {
     if (!this.unlocked) return null;
     const buffer = Assets.sound(key);
     if (!buffer) return null;
@@ -57,9 +59,33 @@ class AudioSystem {
     src.playbackRate.value = rate + (Math.random() * 2 - 1) * variation;
     const gain = this.ctx.createGain();
     gain.gain.value = volume;
-    src.connect(gain).connect(this.sfxBus);
+    src.connect(gain);
+    let tail = gain;
+    if (pan && this.ctx.createStereoPanner) {
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.value = Math.max(-1, Math.min(1, pan));
+      gain.connect(panner);
+      tail = panner;
+    }
+    tail.connect(this.sfxBus);
     src.start();
     return src;
+  }
+
+  /** Distance-attenuated, stereo-panned sfx — for anything that has a place
+   *  in the world (monster voices, explosions, ...) rather than a fixed UI
+   *  cue. Silently skipped once `worldPos` is further than `maxDistance` from
+   *  `listenerPos`, so distant enemies don't spend a voice being inaudible.
+   *  Falls back to a plain, centred playSfx() if there's no listener yet. */
+  playPositional(key, worldPos, listenerPos, { volume = 1, rate = 1, variation = 0, maxDistance = 220 } = {}) {
+    if (!listenerPos) return this.playSfx(key, { volume, rate, variation });
+    const dx = worldPos.x - listenerPos.x;
+    const dy = worldPos.y - listenerPos.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist >= maxDistance) return null;
+    const falloff = 1 - dist / maxDistance;
+    const pan = Math.max(-1, Math.min(1, dx / (maxDistance * 0.6)));
+    return this.playSfx(key, { volume: volume * falloff, rate, variation, pan });
   }
 
   /** Cross-fades to a looping track. Passing the same key twice is a no-op. */

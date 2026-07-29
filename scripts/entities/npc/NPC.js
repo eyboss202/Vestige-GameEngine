@@ -25,6 +25,7 @@ export class NPC extends Entity {
     this.solid = true;
     this.interactable = true;
     this.interactRadius = 22;
+    this.promptKey = 'hud.talk';
     this.hitbox = { w: 10, h: 7, ox: 0, oy: 0 };
 
     this.wander = wander;

@@ -63,6 +63,8 @@ export class Chest extends Entity {
 
 Useful members: `hitbox {w,h,ox,oy}` (anchored at the feet), `solid`, `interactable`,
 `interactRadius`, `depth` (override to force draw order), `update(dt, scene)`, `render(renderer, camera)`.
+`promptKey` (a locale key, e.g. `'hud.take'`/`'hud.open'`/`'hud.talk'`) sets what the HUD's interact
+prompt says instead of the generic `'hud.interact'` ("Examine") — see `ItemPickup`/`Container`/`NPC`.
 
 ---
 
@@ -76,16 +78,89 @@ rebreather: {
   name: { en: 'Rebreather', pt: 'Respirador' },
   description: { en: '...', pt: '...' },
   onPickup: ({ state }) => state.setFlag('has_rebreather', true),
-  onUse: ({ state, scene }) => { /* return false to refuse the use */ },
+  onUse: ({ state, scene, itemId }) => { /* return false to refuse the use */ },
 },
 ```
 
 `icon` indexes `assets/ui/items_placeholder.png` (16×16 cells). Categories drive the inventory filter;
 adding a new one means adding it to `CATEGORIES` in `ui/InventoryUI.js` and an
-`inventory.cat.<name>` string to each locale.
+`inventory.cat.<name>` string to each locale. `onUse` receives its own `itemId` too, for effects that
+need to know which stack they came from (see `readable()` below).
 
 Drop it into a map as `{ "type": "item", "id": "pickup_x", "itemId": "rebreather", "qty": 1, "x": …, "y": … }`.
 Pickups remember they were taken via the world flag `picked:<id>`, so they stay taken across saves.
+
+Give a weapon/tool item a `durability: { max: 80 }` and it wears down with use (`GameState.itemDurability`,
+keyed by item id — see "Add a weapon" below) — `Player.attack()`/`reload()` refuse a broken one with a
+`notify.broken` toast, and `ui/InventoryUI.js` shows the remaining condition in the detail pane and a
+small `X` over the grid icon once it hits zero. Leave `durability` off and the item never wears out.
+
+Any item in the bag can be dropped back into the world with the `drop` action (bound to `G`) while it's
+selected in the inventory screen — `ui/InventoryUI.js`'s `drop()` spawns an `ItemPickup` at the player's
+feet and records it in `GameState.worldItems[mapId]`, so it's still there after a map reload or a save/load,
+and vanishes from that list the moment it's picked back up.
+
+---
+
+## Add a readable (letter/note/diary/book/document/photograph)
+
+Give an item a `dialogueId` and an `onUse: readable('some_tree_id')` — exactly like the recipe for
+"Write dialogue" below, except `readable()` (in `ItemDatabase.js`) starts the tree with `{ mode: 'read' }`,
+which tells `ui/DialogueBox.js` to render a centred, book-styled full page (title bar = the item's own
+name, a page counter, no portrait/speaker/choices — a readable never branches) instead of the bottom
+speech box. Multi-page text, the typewriter and the skip-to-reveal are the same machinery a conversation
+already uses; cancel closes the book early. `state.collectedLogs[dialogueId]` marks it read either way.
+
+```js
+diary_page_1: {
+  id: 'diary_page_1', icon: 9, category: 'quest', stackSize: 1, consumable: false,
+  name: { en: 'Diary — page 1', pt: 'Diario — pagina 1' },
+  description: { en: 'Water-damaged.', pt: 'Danificado pela agua.' },
+  dialogueId: 'diary_page_1',
+  onUse: readable('diary_page_1'),
+},
+```
+
+`icon: 9` is the folded-letter shape in the items sheet (`8` is a key, for lock items — see below).
+
+---
+
+## Add a container (drawer, cabinet, locker, wardrobe, cupboard, chest, box, shelf, nightstand)
+
+One map entity — no new class, `entities/Container.js` is entirely data-driven by `containerType`:
+
+```json
+{ "type": "container", "id": "office_cabinet", "containerType": "cabinet",
+  "x": 120, "y": 88,
+  "contents": [ { "itemId": "bandage", "qty": 2 }, { "itemId": "scrap_metal", "qty": 3 } ] }
+```
+
+Interacting opens `scenes/ContainerScene.js` + `ui/ContainerUI.js`: up/down picks a stack, confirm takes
+it whole into the player's existing inventory (or leaves it — cancel just walks away), a trailing "take
+all" row sweeps everything. Nothing here is a second item/inventory system — it's the same
+`GameState.inventory.add()`/`remove()` every pickup already uses. Whatever's left is snapshotted into
+`GameState.containers[id]` the moment anything is taken, so a partial loot survives a save. `containerType`
+only picks the row in `assets/sprites/containers_placeholder.png` (`CONTAINER_ROW` in `Container.js`) —
+add a new type there and a matching row in `tools/gen_art.py`'s `build_containers()`.
+
+---
+
+## Lock a door or a container
+
+`core/Locks.js` is one small shared shape both a portal trigger and a container's `lock` field use:
+
+```jsonc
+"lock": { "requiresKey": "storage_key", "consumeKey": false }   // Container
+// or, on a portal trigger:
+{ "type": "portal", "id": "vault_gate", "requiresKey": "storage_key", "target": "vault", ... }
+```
+
+`requiresKey` is any ordinary inventory item id (give it `category: 'key'` in ItemDatabase — `icon: 8` is
+the dedicated key shape). `requiresFlag` (portals only, pre-existing) gates on a world flag a story event
+sets instead — the two can combine. A keyed lock only needs `id` (the trigger's own, or the container's,
+which already has one) so `isLocked()`/`tryUnlock()` can remember it's been opened
+(`unlocked:<id>`) without re-checking the bag — or re-consuming the key — every time. Locked-out feedback
+(`notify.lockedNeeds` / `container.locked`) fills in the key's own localised name automatically.
 
 ---
 
@@ -109,6 +184,14 @@ by adding a new `draw_*` function and `sprite` key — nothing else about the ar
 `armor` and `resistances: { melee, ranged }` both reduce incoming damage in `takeDamage`,
 `unique: true` is just a content marker, and `lootTable` is a key into `data/lootTables.js`, rolled
 by `Enemy.die()`.
+
+Every archetype also gets its own idle/alert/attack/death voice, played positionally (panned and
+attenuated by distance to the player — `AudioSystem.playPositional`) rather than a shared combat sfx.
+`Enemy.voice` defaults to the archetype id, which is also the sound-key prefix `config/manifest.js`
+expects (`${id}_idle`/`_alert`/`_attack`/`_death`); add a row to `tools/gen_audio.py`'s `MONSTER_VOICES`
+(and re-run it) and a matching id to `manifest.js`'s `MONSTER_VOICE_IDS`, and a brand-new archetype has
+working, distinct sounds the same way it gets working art — point `sprite`/`voice` at an existing key
+first, swap in real assets later.
 
 ---
 
@@ -240,6 +323,18 @@ ranged spawns `entities/Projectile.js`, throwables go through the `throw` action
 `entities/Throwable.js`. `mods: []` on every weapon is a reserved, currently-unused seam for future
 upgrades — nothing reads it yet.
 
+A ranged weapon also wants `magazineSize`/`reloadTime`: `Player.attack()` fires from the magazine
+(`GameState.weaponAmmo`, keyed by the item id), and only the `reload` action (bound to `R`,
+`Player.reload()`) pulls from the inventory's `ammoType` reserve to refill it — there is no infinite
+magazine and no automatic reloading. Give the *item*, not the weapon archetype, a `durability: { max }`
+(see "Add an item") if it should wear out — every swing/shot chips it, and a broken one refuses to fire
+or reload until a future repair system exists.
+
+Every weapon category also needs a row in `WEAPON_VISUAL_ROW` (`entities/player/Player.js`) so it shows
+up in the player's hand — the five shipped categories already have one, so a same-category weapon (a
+second pistol, say) needs nothing extra; a genuinely new category needs a row there plus a matching row
+in `tools/gen_art.py`'s `build_weapons_hand()`.
+
 ---
 
 ## Add a trap
@@ -345,3 +440,6 @@ Roughly in order of how much they unlock:
 6. **Save slots UI polish** — `Save.list()` already returns per-slot previews (map, playtime, HP).
 7. **Pathfinding** — `Enemy.moveToward` still steers straight at its target; swap in A* over the
    collision grid once maps get more maze-like (this now matters more, with ranged/tank enemies).
+8. **Item repair** — `GameState.damageDurability()`/`getDurability()` are the read/write seam; a repair
+   kit item or a workbench prop just needs an `onUse`/`interact` that raises the equipped weapon's stored
+   value back up, the same way healing items already raise `player.hp`.

@@ -7,6 +7,9 @@ import { t } from '../core/I18n.js';
 import { Settings } from '../config/Settings.js';
 import { drawItemIconFor } from './ItemIcon.js';
 import { Assets } from '../core/AssetManager.js';
+import { getItem } from '../entities/items/ItemDatabase.js';
+import { getWeapon } from '../data/weapons.js';
+import { localised } from '../core/I18n.js';
 
 /** Segments per meter row — fixed regardless of the stat's actual max, same
  *  abstraction Minecraft's hearts use (10 hearts always, however much max
@@ -14,7 +17,10 @@ import { Assets } from '../core/AssetManager.js';
 const SEGMENTS = 10;
 const ICON = 8;
 /** Row index into assets/ui/hud_icons_placeholder.png (see tools/gen_art.py
- *  build_hud_icons — 3 rows x 3 cols of 8x8, cols = empty/half/full). */
+ *  build_hud_icons — 4 rows x 3 cols of 8x8, cols = empty/half/full). Row 3
+ *  (armor) is drawn only in the inventory screen (ui/InventoryUI.js) — the
+ *  gameplay HUD stays to hp/hunger/thirst so it doesn't duplicate a value
+ *  that's already one keypress away. */
 const METER_ROW = { hp: 0, hunger: 1, thirst: 2 };
 
 /** How long a changed segment stays highlighted (bounce + white flash). */
@@ -97,6 +103,33 @@ export class HUD {
     }
   }
 
+  /** Clip/reserve for whatever's equipped, plus a "RELOADING" cue while
+   *  Player.reloadTimer is running — see entities/player/Player.js reload(). */
+  renderAmmo(ctx, scene, x, y) {
+    const weaponItemId = GameState.equipment.get('weapon');
+    const itemDef = weaponItemId && getItem(weaponItemId);
+    const weapon = itemDef?.weaponId ? getWeapon(itemDef.weaponId) : null;
+    if (!weapon?.ammoType) return;
+
+    const clip = GameState.getWeaponAmmo(weaponItemId, weapon.magazineSize);
+    const reserve = GameState.inventory.quantity(weapon.ammoType);
+    const label = `${t('hud.ammo')} ${clip}/${weapon.magazineSize} (${reserve})`;
+    Font.draw(ctx, label, x, y, { color: clip <= 0 ? PALETTE.danger : PALETTE.bone });
+
+    const player = scene?.player;
+    if (player?.reloadTimer > 0) {
+      Font.draw(ctx, t('notify.reloading'), x, y + Font.lineHeight(), { color: PALETTE.amber });
+    } else {
+      const max = itemDef.durability?.max;
+      if (max) {
+        const durability = GameState.getDurability(weaponItemId, max);
+        const broken = durability <= 0;
+        const label2 = `${localised(itemDef.name)}: ${broken ? t('inventory.broken') : Math.ceil((durability / max) * 100) + '%'}`;
+        Font.draw(ctx, label2, x, y + Font.lineHeight(), { color: broken ? PALETTE.danger : PALETTE.dim });
+      }
+    }
+  }
+
   render(renderer, scene) {
     const ctx = renderer.ctx;
     const maxStamina = GameState.derivedStat('maxStamina');
@@ -108,9 +141,12 @@ export class HUD {
     const x = 8;
     const y = 8;
     const barW = SEGMENTS * ICON;
+    const weaponItemId = GameState.equipment.get('weapon');
+    const hasRangedWeapon = !!getItem(weaponItemId)?.weaponId && !!getWeapon(getItem(weaponItemId).weaponId)?.ammoType;
+    const panelH = ICON * 3 + 16 + (hasRangedWeapon ? Font.lineHeight() * 2 + 2 : 0);
     ctx.fillStyle = 'rgba(7,9,11,0.7)';
-    ctx.fillRect(x - 2, y - 2, barW + 4, ICON * 3 + 16);
-    renderer.outline(x - 2, y - 2, barW + 4, ICON * 3 + 16, PALETTE.concreteLight);
+    ctx.fillRect(x - 2, y - 2, barW + 4, panelH);
+    renderer.outline(x - 2, y - 2, barW + 4, panelH, PALETTE.concreteLight);
 
     const staminaY = y;
     ctx.fillStyle = '#1d2a26';
@@ -122,6 +158,12 @@ export class HUD {
     this.drawMeter(ctx, sheet, METER_ROW.hp, x, y + 6, this.hpStates || segmentsFor(stats.hp, GameState.derivedStat('maxHp')), this.flash.hp);
     this.drawMeter(ctx, sheet, METER_ROW.hunger, x, y + 6 + ICON + 2, this.hungerStates || segmentsFor(stats.hunger, stats.maxHunger), this.flash.hunger);
     this.drawMeter(ctx, sheet, METER_ROW.thirst, x, y + 6 + (ICON + 2) * 2, this.thirstStates || segmentsFor(stats.thirst, stats.maxThirst), this.flash.thirst);
+
+    // --- ammo / reload readout, only while a ranged weapon is equipped ----
+    // Armor is intentionally not shown here — see ui/InventoryUI.js
+    // renderArmorMeter(), the only place it's displayed now.
+    const nextRowY = y + 6 + (ICON + 2) * 3;
+    this.renderAmmo(ctx, scene, x, nextRowY + 3);
 
     // --- area title -------------------------------------------------------
     if (this.areaTimer > 0 && this.areaTitle) {
@@ -137,7 +179,7 @@ export class HUD {
     // --- interaction prompt ----------------------------------------------
     const target = scene?.interactTarget;
     if (target && !scene.dialogueBox.active) {
-      const label = t('hud.interact');
+      const label = t(target.promptKey || 'hud.interact');
       const width = Font.measure(label) + 22;
       const px = Math.round(target.x - scene.camera.renderX - width / 2);
       const py = Math.round(target.y - scene.camera.renderY - (target.spriteH || 20) - 16 + Math.sin(this.phase * 4) * 1);

@@ -64,10 +64,16 @@ P = {
     "maw":       (24, 16, 18, 255),
     "sac":       (108, 132, 88, 255),
     "sac_sh":    (74, 96, 60, 255),
+    "wound":     (74, 14, 16, 255),
+    "wound_d":   (44, 8, 10, 255),
+    "pus":       (150, 168, 74, 255),
+    "bone_dark":  (58, 52, 46, 255),
 
     # -- HUD icons ------------------------------------------------------------
     "water":     (95, 168, 216, 255),
     "hud_dim":   (44, 51, 53, 255),
+    "steel":     (154, 178, 196, 255),
+    "steel_hi":  (204, 222, 232, 255),
 }
 
 TS = 16          # tile size
@@ -296,13 +302,53 @@ def build_tileset():
 CW, CH = 16, 24
 
 
-def draw_char(d, ox, oy, direction, frame, pal):
+def _draw_held_item(px, held, dr, hx, hy, fx):
+    """Weapon/tool glyph baked onto the hand pixel computed in draw_char()'s
+    arms block — see that call site for `hx, hy, fx`. Kept intentionally
+    tiny and inside the sprite's own 16px width (no separate overlay, no
+    hand-offset heuristics at runtime): this *is* the held-item art, part of
+    the same texture as the arm that's holding it, so it inherits the walk
+    cycle's bob/swing for free. `held` is a data/weapons.js category."""
+    # Bright, saturated tones on purpose — the dark coat/belt already occupy
+    # this part of the frame, so a held item drawn in a close, muted tone
+    # (concrete grey against a near-black coat) just disappears at gameplay
+    # scale. High-contrast steel/bone/amber reads clearly at a glance instead.
+    grip, rust, blade = (58, 46, 36, 255), P["rust"], P["bone"]
+    steel, steel_hi = P["steel"], P["steel_hi"]
+    short = dr == 3   # facing away — character's back hides most of it
+
+    if held == 'melee':
+        px(hx, hy, rust)
+        px(hx + fx, hy - 1, blade)
+        if not short:
+            px(hx + fx, hy - 2, blade)
+            px(hx + fx * 2, hy - 2, steel_hi)
+    elif held == 'pistol':
+        px(hx, hy, grip)
+        px(hx, hy - 1, steel)
+        px(hx + fx, hy - 1, steel_hi if short else steel)
+        if not short:
+            px(hx + fx * 2, hy - 1, steel_hi)
+    elif held in ('rifle', 'shotgun'):
+        tone = steel if held == 'shotgun' else steel_hi
+        px(hx - fx, hy, grip)
+        px(hx, hy - 1, steel)
+        px(hx + fx, hy - 1, steel if short else tone)
+        if not short:
+            px(hx + fx * 2, hy - 1, tone)
+            px(hx + fx * 3, hy - 1, steel_hi)
+
+
+def draw_char(d, ox, oy, direction, frame, pal, held=None):
     """direction: 0 down 1 left 2 right 3 up. frame 0..3 (0/2 idle, 1/3 step).
 
     Base humanoid renderer shared by the player and every NPC/enemy sheet.
     Accessories (glasses/beard/backpack/patches) are opt-in via boolean keys
     on `pal` so this stays the one place a walk-cycle silhouette is drawn —
-    see build_characters(): only the player's palette sets them.
+    see build_characters(): only the player's palette sets them. `held` (a
+    data/weapons.js category, or None) bakes a held-item glyph onto the hand
+    — see build_player_holding() — instead of Player.js compositing a
+    separate floating icon at runtime.
     """
     mirror = direction == 2
     dr = 1 if mirror else direction
@@ -388,6 +434,15 @@ def draw_char(d, ox, oy, direction, frame, pal):
     rc(12, by + 1, 12, by + 6, coat_sh)
     px(3, by + 7 + max(swing, 0), skin)
     px(12, by + 7 - min(swing, 0), skin)
+    if held:
+        # Profile view is always drawn "facing left" locally (px() mirrors it
+        # for direction 2/right — see the head-drawing block above), so the
+        # forward hand there is the low-x one; down/away use the high-x hand
+        # with the item leaning toward screen-right.
+        if dr == 1:
+            _draw_held_item(px, held, dr, 3, by + 7 + max(swing, 0), -1)
+        else:
+            _draw_held_item(px, held, dr, 12, by + 7 - min(swing, 0), 1)
 
     # backpack: mainly visible walking away from camera, plus a shoulder-strap
     # hint from the side, so turning around always reads as "still there".
@@ -415,12 +470,12 @@ def draw_char(d, ox, oy, direction, frame, pal):
         rc(5, ly + 4, 7, ly + 4, shoe); rc(8, ly + 4, 10, ly + 4, shoe)
 
 
-def sheet(name, pal):
+def sheet(name, pal, held=None):
     img = Image.new("RGBA", (CW * 4, CH * 4), P["clear"])
     d = ImageDraw.Draw(img)
     for row in range(4):
         for col in range(4):
-            draw_char(d, col * CW, row * CH, row, col, pal)
+            draw_char(d, col * CW, row * CH, row, col, pal, held=held)
     img.save(os.path.join(ROOT, "sprites", name))
 
 
@@ -456,6 +511,56 @@ def build_player():
         patch=P["patch"], belt=P["shoe"], trim=P["field_coat_hi"], tuft=True,
     )
     sheet("player_doctor_placeholder.png", player)
+    # One dedicated walk-cycle sheet per weapon category, the held item baked
+    # onto the hand pixel by draw_char()'s `held` param — see Player.js,
+    # which swaps this.animator.image to the matching sheet the instant the
+    # equipped weapon's category changes, instead of compositing a separate
+    # floating icon over the base sheet at runtime.
+    for category in ("melee", "pistol", "rifle", "shotgun"):
+        sheet(f"player_doctor_{category}_placeholder.png", player, held=category)
+
+
+def build_player_dead():
+    """Severely wounded corpse variant, same 16x24 grid/silhouette as
+    build_player()'s base sheet — entities/player/Player.js startDeath()
+    swaps the animator onto this instead of the normal sheet, so the
+    (unmodified) collapse animation shows a bloodied body falling rather than
+    the ordinary one. Paler shock-pallor skin, a darker torn coat and a
+    blood-red trim replace the normal palette; hand-placed spatter and a
+    pooling stain (not achievable through draw_char()'s accessory flags, so
+    added as a post-process pass over the finished sheet) do the rest."""
+    pal = dict(
+        hair=P["copper_hair"], skin=(158, 128, 122, 255), skin_sh=(110, 82, 80, 255),
+        coat=(52, 36, 36, 255), coat_sh=(34, 22, 22, 255),
+        trouser=(28, 22, 22, 255), trouser_l=(40, 32, 32, 255),
+        shoe=(20, 16, 16, 255), eye=(30, 34, 38, 255),
+        glasses=True, lens=P["lens"], lens_frame=P["ash"],
+        beard=True, beard_color=P["stubble"],
+        backpack=P["pack"], backpack_sh=P["pack_sh"], backpack_strap=P["pack_strap"],
+        patch=P["patch"], belt=P["shoe"], trim=(110, 26, 26, 255), tuft=True,
+    )
+    img = Image.new("RGBA", (CW * 4, CH * 4), P["clear"])
+    d = ImageDraw.Draw(img)
+    for row in range(4):
+        for col in range(4):
+            draw_char(d, col * CW, row * CH, row, col, pal, held=None)
+
+    blood, blood_d = (128, 20, 20, 255), (76, 10, 10, 255)
+    rnd = random.Random(99)
+    for row in range(4):
+        for col in range(4):
+            ox, oy = col * CW, row * CH
+            for _ in range(8):                       # torso/head spatter
+                x, y = ox + rnd.randint(3, 12), oy + rnd.randint(3, 17)
+                c = blood if rnd.random() < 0.6 else blood_d
+                d.point((x, y), c)
+                if rnd.random() < 0.5:
+                    d.point((x + 1, y), c)
+            for x in range(ox + 3, ox + 13):          # pooling stain at the feet
+                if rnd.random() < 0.65:
+                    d.point((x, oy + 23), blood_d)
+
+    img.save(os.path.join(ROOT, "sprites", "player_doctor_dead_placeholder.png"))
 
 
 # --------------------------------------------------------------------------
@@ -505,45 +610,75 @@ def _arms(rc, px, by, frame, sh, hand, x0=3, x1=12, droop=0):
     px(x1, by + 7 + droop - min(swing, 0), hand)
 
 
+def _gash(px, x0, y0, x1, y1, c):
+    """One-pixel diagonal scar/gash/vein line — routed through px() so it
+    mirrors correctly for the right-facing frame like every structural
+    detail here, unlike the noise() texture calls below (which fill an
+    already left/right-symmetric rectangle and so don't need to)."""
+    steps = max(abs(x1 - x0), abs(y1 - y0), 1)
+    for i in range(steps + 1):
+        px(round(x0 + (x1 - x0) * i / steps), round(y0 + (y1 - y0) * i / steps), c)
+
+
+def _drip(px, x, y0, y1, c):
+    """A thin vertical drip (blood/drool/acid) trailing down from a wound or
+    a maw — y0 the source, y1 the furthest it's run down."""
+    for y in range(y0, y1 + 1):
+        px(x, y, c)
+
+
 def draw_husk(d, ox, oy, direction, frame):
-    """Gaunt scavenger, patchy scalp, torn shirt, sunken glowing eye sockets
-    instead of a face. The baseline threat — unremarkable size and speed."""
+    """Gaunt scavenger, patchy scalp, torn shirt over a visible ribcage,
+    sunken glowing eye sockets instead of a face, a thin trail of dried
+    blood from the jaw. The baseline threat — unremarkable size and speed,
+    but the most decayed-looking of the lot; everything scarier past this
+    one is a further mutation away from this starting point."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 2 + bob
     skin, skin_sh = P["flesh"], P["flesh_sh"]
     cloth, cloth_sh = (50, 54, 45, 255), (34, 38, 32, 255)
 
-    rc(5, top, 10, top + 8, skin)
+    noise(d, ox + 5, oy + top, 6, 9, skin, skin_sh, seed=ox * 7 + oy + 1, density=0.22)
     rc(5, top + 7, 10, top + 8, skin_sh)
     px(5, top, P["ash"]); px(7, top, P["ash"]); px(9, top, P["ash"])   # scalp gone in patches
+    px(6, top + 2, skin_sh); px(9, top + 2, skin_sh)                    # sunken cheeks
     if dr == 0:
         px(6, top + 4, P["eye_glow"]); px(9, top + 4, P["eye_glow"])
         rc(7, top + 6, 8, top + 6, P["maw"])
+        _drip(px, 8, top + 7, top + 8, P["wound_d"])                     # dried blood off the jaw
     elif dr == 3:
         rc(5, top + 1, 10, top + 6, (38, 40, 34, 255))
     else:
         px(5, top + 4, P["eye_glow"])
         rc(4, top + 6, 6, top + 6, P["maw"])
+        _drip(px, 5, top + 7, top + 7, P["wound_d"])
 
     by = top + 9
-    rc(4, by, 11, by + 8, cloth)
-    rc(4, by + 7, 11, by + 8, cloth_sh)
+    noise(d, ox + 4, oy + by, 8, 9, cloth, cloth_sh, seed=ox * 5 + oy + 2, density=0.3)
     if dr != 3:
-        rc(6, by + 1, 9, by + 5, skin_sh)   # torn shirt, ribs showing through
+        for rib_y in (by + 1, by + 3, by + 5):                            # ribs showing through torn shirt
+            rc(6, rib_y, 9, rib_y, skin_sh)
+        px(7, by + 2, skin); px(8, by + 4, skin)
+    # Ragged, staggered hem instead of one straight cut.
+    for hx, drop in [(4, 0), (5, 1), (6, 0), (7, 1), (8, 0), (9, 1), (10, 0), (11, 1)]:
+        px(hx, by + 7 + drop, cloth_sh)
     _arms(rc, px, by, frame, skin_sh, skin, x0=3, x1=12, droop=1)
+    px(12, by + 8 + (1 if frame == 3 else 0), P["bone_c"])                # one skeletal fingertip
 
     _walk_legs(rc, px, by + 9, frame, cloth, cloth_sh, P["ash"])
 
 
 def draw_mutant(d, ox, oy, direction, frame):
-    """Bulkier — one grossly overgrown arm, boil-studded flesh, red eyeshine."""
+    """Bulkier — one grossly overgrown arm laced with bulging veins, a
+    tumorous shoulder where it joins the body, boil-studded flesh (a couple
+    swollen into dark-centred cysts), red eyeshine."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 2 + bob
     skin, skin_sh = P["flesh"], P["sinew"]
 
-    rc(4, top, 11, top + 8, skin)
+    noise(d, ox + 4, oy + top, 8, 9, skin, skin_sh, seed=ox * 3 + oy + 10, density=0.2)
     rc(4, top + 7, 11, top + 8, skin_sh)
     if dr == 0:
         px(6, top + 5, P["eye_red"]); px(9, top + 5, P["eye_red"])
@@ -556,46 +691,64 @@ def draw_mutant(d, ox, oy, direction, frame):
         px(9, top + 2, P["boil"])
 
     by = top + 9
-    rc(3, by, 12, by + 8, skin)
+    noise(d, ox + 3, oy + by, 10, 9, skin, skin_sh, seed=ox * 3 + oy + 11, density=0.16)
     rc(3, by + 7, 12, by + 8, skin_sh)
     rc(11, by, 13, by + 8, skin_sh)      # oversized right arm/shoulder mass
+    rc(10, by - 1, 12, by, P["boil"])    # tumorous growth at the join
+    px(11, by - 1, P["wound_d"])
+    _gash(px, 12, by + 1, 12, by + 6, P["sinew"])    # bulging vein down the oversized arm
+    _gash(px, 11, by + 2, 13, by + 5, P["sinew"])
     px(8, by + 2, P["boil"]); px(6, by + 4, P["boil"]); px(4, by + 6, P["boil"])
+    px(7, by + 5, P["boil"]); px(7, by + 6, P["wound_d"])          # a cyst swollen enough to have gone dark at the core
     _arms(rc, px, by, frame, skin_sh, skin, x0=2, x1=13, droop=1)
 
     _walk_legs(rc, px, by + 9, frame, (46, 34, 28, 255), (60, 44, 36, 255), P["ash"])
 
 
 def draw_brute(d, ox, oy, direction, frame):
-    """Hunched tank — small head sunk between huge shoulders, bone spikes
-    down the back. Reads as dangerous mass before the runtime `scale` even
-    enlarges it further (data/enemies.js)."""
+    """Hunched tank — small head sunk between huge shoulders, a ragged row
+    of bone spikes down the back, old scars crossing the chest, a
+    permanently drooling maw and a snapped restraint still cuffed to one
+    wrist (something kept this contained, once). Reads as dangerous mass
+    before the runtime `scale` even enlarges it further (data/enemies.js)."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 3 + bob
     skin, skin_sh = (108, 118, 96, 255), (76, 86, 66, 255)
 
-    rc(5, top, 10, top + 6, skin)
-    rc(5, top + 5, 10, top + 6, skin_sh)
+    noise(d, ox + 5, oy + top, 6, 7, skin, skin_sh, seed=ox * 9 + oy + 20, density=0.18)
     if dr == 0:
         px(6, top + 3, P["eye_red"]); px(9, top + 3, P["eye_red"])
+        rc(7, top + 5, 8, top + 5, P["maw"])
+        _drip(px, 7, top + 6, top + 7, P["wound_d"])
     elif dr == 3:
         rc(5, top, 10, top + 5, skin_sh)
     else:
         px(5, top + 3, P["eye_red"])
+        px(5, top + 5, P["maw"])
+        _drip(px, 5, top + 6, top + 7, P["wound_d"])
 
     by = top + 7
-    rc(2, by, 13, by + 9, skin)
+    noise(d, ox + 2, oy + by, 12, 9, skin, skin_sh, seed=ox * 9 + oy + 21, density=0.14)
     rc(2, by + 8, 13, by + 9, skin_sh)
-    for bx, byy in [(2, by), (13, by), (5, by - 1), (9, by - 1)]:
+    for bx, byy in [(2, by), (13, by), (5, by - 1), (9, by - 1), (7, by - 1)]:
         px(bx, byy, P["bone_c"]); px(bx, byy - 1, P["bone_sh"])
+    if dr != 3:
+        _gash(px, 5, by + 2, 9, by + 4, P["wound_d"])     # old scar across the chest
+        _gash(px, 6, by + 5, 8, by + 6, P["wound"])
     _arms(rc, px, by, frame, skin_sh, skin, x0=1, x1=14, droop=2)
+    swing = {0: 0, 1: -1, 2: 0, 3: 1}[frame]
+    wrist_y = by + 6 + max(swing, 0)                       # snapped shackle, left wrist
+    px(1, wrist_y, P["bone_dark"]); px(1, wrist_y + 1, P["conc_d"])
 
     _walk_legs(rc, px, by + 10, frame, (40, 44, 36, 255), (52, 58, 46, 255), P["ash"], x0=3, x1=12)
 
 
 def draw_stalker(d, ox, oy, direction, frame):
-    """Thin, crouched sprinter — small head, spindly overlong arms, violet
-    eyeshine. Short detect radius, long reach once it notices you."""
+    """Thin, crouched sprinter — small head, spindly arms jointed at an
+    inward elbow and ending in claws, a visible knobbed spine ridge from
+    behind, violet eyeshine, a grin too wide for the face. Short detect
+    radius, long reach once it notices you."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 3 + bob
@@ -605,23 +758,33 @@ def draw_stalker(d, ox, oy, direction, frame):
     rc(6, top + 5, 9, top + 6, skin_sh)
     if dr == 0:
         px(7, top + 3, P["eye_violet"]); px(8, top + 3, P["eye_violet"])
+        rc(6, top + 5, 9, top + 5, P["maw"])
     elif dr == 3:
         rc(6, top, 9, top + 5, skin_sh)
+        for spy in (top + 7, top + 9, top + 11):
+            px(7, spy, P["bone_c"])
     else:
         px(6, top + 3, P["eye_violet"])
+        px(6, top + 5, P["maw"])
 
     by = top + 7
     rc(6, by, 9, by + 8, skin)
     rc(6, by + 7, 9, by + 8, skin_sh)
-    rc(2, by + 1, 2, by + 9, skin_sh); rc(13, by + 1, 13, by + 9, skin_sh)   # unnaturally long arms
-    px(2, by + 10, skin); px(13, by + 10, skin)
+    if dr != 3:
+        px(7, by + 3, skin_sh)   # gaunt ribcage hint
+    rc(2, by + 1, 2, by + 5, skin_sh); rc(3, by + 5, 3, by + 9, skin_sh)      # left arm, jointed at the elbow
+    rc(13, by + 1, 13, by + 5, skin_sh); rc(12, by + 5, 12, by + 9, skin_sh)  # right arm, mirrored joint
+    px(3, by + 10, skin_sh); px(12, by + 10, skin_sh)
+    px(3, by + 11, P["ash"]); px(12, by + 11, P["ash"])                       # clawed fingertip
 
     _walk_legs(rc, px, by + 9, frame, skin, skin_sh, (20, 16, 24, 255), x0=5, x1=10)
 
 
 def draw_spitter(d, ox, oy, direction, frame):
-    """Bloated acid sac where a torso should be. Holds range and lobs
-    Projectiles (behavior: 'ranged' in data/enemies.js) instead of closing in."""
+    """Bloated acid sac where a torso should be, its membrane mottled and
+    laced with veins, drooling a thin trail of caustic drool. Holds range
+    and lobs Projectiles (behavior: 'ranged' in data/enemies.js) instead of
+    closing in."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 3 + bob
@@ -632,23 +795,30 @@ def draw_spitter(d, ox, oy, direction, frame):
     if dr == 0:
         px(6, top + 3, P["eye_glow"]); px(9, top + 3, P["eye_glow"])
         rc(7, top + 5, 8, top + 5, P["maw"])
+        _drip(px, 8, top + 6, top + 8, P["pus"])
     elif dr == 3:
         rc(5, top, 10, top + 5, skin_sh)
     else:
         px(5, top + 3, P["eye_glow"])
+        _drip(px, 5, top + 5, top + 7, P["pus"])
 
     by = top + 7
-    rc(3, by, 12, by + 9, P["sac"])
+    noise(d, ox + 3, oy + by, 10, 9, P["sac"], P["sac_sh"], seed=ox * 11 + oy + 30, density=0.22)
     rc(3, by + 8, 12, by + 9, P["sac_sh"])
     px(5, by + 3, P["sac_sh"]); px(10, by + 4, P["sac_sh"]); px(7, by + 6, P["boil"])
+    _gash(px, 4, by + 2, 6, by + 5, P["sac_sh"])      # veins tracing the membrane
+    _gash(px, 9, by + 1, 11, by + 6, P["sac_sh"])
+    px(6, by + 7, P["pus"])                             # a weeping pustule low on the sac
     _arms(rc, px, by, frame, skin_sh, skin, x0=2, x1=13, droop=0)
 
     _walk_legs(rc, px, by + 10, frame, skin, skin_sh, (24, 30, 22, 255), x0=5, x1=10)
 
 
 def draw_swarmling(d, ox, oy, direction, frame):
-    """Small and low — pushed down in the frame with extra limb stubs so it
-    reads as a many-legged crawler even before the 0.7x runtime scale."""
+    """Small and low, a many-legged crawler pushed down in the frame —
+    chitin-plated segments, a cluster of small compound-eye dots, twitching
+    mandibles and a faint glowing marking on the abdomen, even before the
+    0.7x runtime scale makes it look more insectile still."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 7 + bob
@@ -658,15 +828,21 @@ def draw_swarmling(d, ox, oy, direction, frame):
     rc(6, top + 4, 9, top + 5, skin_sh)
     if dr == 0:
         px(6, top + 2, P["eye_glow"]); px(9, top + 2, P["eye_glow"])
+        px(7, top + 1, P["eye_glow"]); px(8, top + 1, P["eye_glow"])   # extra compound-eye dots
+        px(6, top + 4, P["ash"]); px(9, top + 4, P["ash"])              # twitching mandibles
     elif dr == 3:
         rc(6, top, 9, top + 4, skin_sh)
     else:
-        px(6, top + 2, P["eye_glow"])
+        px(6, top + 2, P["eye_glow"]); px(6, top + 1, P["eye_glow"])
+        px(6, top + 4, P["ash"])
 
     by = top + 6
-    rc(5, by, 10, by + 6, skin)
+    rc(5, by, 10, by + 6, P["carapace"])
+    rc(5, by + 2, 10, by + 2, P["carapace_sh"])
+    rc(5, by + 4, 10, by + 4, P["carapace_sh"])
     rc(5, by + 5, 10, by + 6, skin_sh)
-    for lx in (3, 4, 11, 12):
+    px(7, by + 3, P["eye_glow"])   # faint glow marking the abdomen
+    for lx in (2, 3, 4, 11, 12, 13):
         px(lx, by + 3, skin_sh)   # extra limb stubs either side
     _arms(rc, px, by, frame, skin_sh, skin, x0=4, x1=11, droop=-2)
 
@@ -674,17 +850,20 @@ def draw_swarmling(d, ox, oy, direction, frame):
 
 
 def draw_sentinel(d, ox, oy, direction, frame):
-    """Unique boss — a bone crown, three amber eyes, the widest frame here.
-    `unique: true` in data/enemies.js, biggest scale of the set."""
+    """Unique boss — an uneven crown of bone spikes, three amber eyes, bone
+    plating fused directly into the chest with visible crack lines, faint
+    rune-like amber markings tracing down the torso, an asymmetric spur on
+    one shoulder, clawed oversized hands, a tattered cloak-shadow trailing
+    off the shoulders from behind. The widest frame here even before
+    `unique: true` (data/enemies.js) applies the biggest scale of the set."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 1 + bob
     skin, skin_sh = (86, 62, 96, 255), (56, 40, 64, 255)
 
-    rc(4, top, 11, top + 8, skin)
-    rc(4, top + 7, 11, top + 8, skin_sh)
-    for cx in (4, 6, 9, 11):
-        px(cx, top - 1, P["bone_c"])
+    noise(d, ox + 4, oy + top, 8, 9, skin, skin_sh, seed=ox * 13 + oy + 40, density=0.16)
+    for cx, ch_ in ((4, 0), (6, 1), (9, 1), (11, 0)):
+        px(cx, top - 1 - ch_, P["bone_c"]); px(cx, top - ch_, P["bone_sh"])
     if dr == 0:
         px(5, top + 4, P["amber"]); px(8, top + 4, P["amber"]); px(6, top + 6, P["amber"])
     elif dr == 3:
@@ -694,10 +873,20 @@ def draw_sentinel(d, ox, oy, direction, frame):
         px(5, top + 4, P["amber"]); px(5, top + 6, P["amber"])
 
     by = top + 9
-    rc(2, by, 13, by + 9, skin)
+    noise(d, ox + 2, oy + by, 12, 9, skin, skin_sh, seed=ox * 13 + oy + 41, density=0.12)
     rc(2, by + 8, 13, by + 9, skin_sh)
     px(2, by - 1, P["bone_c"]); px(13, by - 1, P["bone_c"])
+    px(11, by - 2, P["bone_c"]); px(11, by - 1, P["bone_sh"])   # asymmetric shoulder spur
+    if dr != 3:
+        rc(6, by + 1, 9, by + 4, P["bone_c"])                     # bone plate fused into the chest
+        px(6, by + 2, P["bone_sh"]); px(9, by + 3, P["bone_sh"])  # crack lines
+        px(7, by + 6, P["amber"]); px(8, by + 8, P["amber"])       # rune markings tracing down
+    else:
+        for cy in range(by + 1, by + 8, 2):
+            px(3, cy, (30, 20, 34, 255)); px(12, cy, (30, 20, 34, 255))   # tattered cloak-shadow
     _arms(rc, px, by, frame, skin_sh, skin, x0=1, x1=14, droop=1)
+    swing = {0: 0, 1: -1, 2: 0, 3: 1}[frame]
+    px(1, by + 8 + max(swing, 0), P["bone_c"]); px(14, by + 8 - min(swing, 0), P["bone_c"])   # clawed hands
 
     _walk_legs(rc, px, by + 10, frame, (44, 32, 52, 255), (58, 44, 68, 255), P["ash"], x0=4, x1=11)
 
@@ -742,37 +931,369 @@ def build_ui():
     dc.polygon([(0, 1), (3, 4), (0, 7)], fill=P["bone"])
     car.save(os.path.join(ROOT, "ui", "caret_placeholder.png"))
 
-    # item icons, 16x16 grid of 8
-    ic = Image.new("RGBA", (16 * 8, 16), P["clear"])
+    # item icons, 16x16 grid — 38 cells. Every item in ItemDatabase.js gets
+    # its own dedicated cell now; nothing on the sheet is shared and
+    # recoloured with iconTint anymore (see ui/ItemIcon.js).
+    ITEM_ICON_COLS = 38
+    ic = Image.new("RGBA", (16 * ITEM_ICON_COLS, 16), P["clear"])
     di = ImageDraw.Draw(ic)
 
     def at(i, x0, y0, x1, y1, c):
         di.rectangle([i * 16 + x0, y0, i * 16 + x1, y1], fill=c)
-    # 0 syringe
-    at(0, 4, 3, 11, 5, P["bone"]); at(0, 5, 5, 10, 11, P["glow"]); at(0, 7, 11, 8, 14, P["conc_l"])
-    # 1 pill bottle
-    at(1, 4, 4, 11, 14, (180, 190, 188, 255)); at(1, 5, 2, 10, 4, P["rust"]); at(1, 6, 7, 9, 11, P["amber"])
-    # 2 keycard
-    at(2, 3, 5, 12, 12, P["conc_l"]); at(2, 4, 6, 11, 8, P["glow"]); at(2, 4, 9, 8, 11, P["ash"])
+
+    # 0 syringe — glass barrel with a visible fluid level and graduation
+    # ticks, a plunger rod poking out the top, an angled needle off the
+    # bottom — the same "angled accent off a solid base" trick icon 10
+    # (combat knife) uses, instead of three flat stacked rectangles.
+    so = 0 * 16
+    at(0, 5, 5, 10, 12, P["glass"])
+    at(0, 5, 8, 10, 12, P["glow"])
+    di.line([so + 5, 8, so + 10, 8], fill=P["ash"])
+    di.line([so + 5, 10, so + 10, 10], fill=P["ash"])
+    at(0, 6, 4, 9, 5, P["conc_l"])
+    di.line([(so + 7, 4), (so + 7, 1)], fill=P["bone"], width=1)
+    di.point((so + 7, 0), P["bone"])
+    di.line([(so + 10, 12), (so + 13, 15)], fill=P["conc_l"], width=1)
+    di.point((so + 13, 15), P["conc_d"])
+
+    # 1 pill bottle — ridged cap, a wrapped paper label and a glossy edge
+    # highlight instead of three flat rectangles.
+    po = 1 * 16
+    at(1, 4, 5, 11, 14, P["amber"])
+    di.rectangle([po + 4, 5, po + 11, 14], outline=P["rust_d"])
+    at(1, 5, 7, 10, 10, (230, 226, 214, 255))
+    di.line([po + 5, 8, po + 9, 8], fill=P["rust"])
+    at(1, 5, 2, 10, 5, (225, 229, 227, 255))
+    for cx_ in (6, 8, 10):
+        di.line([po + cx_, 2, po + cx_, 4], fill=P["conc_l"])
+    di.line([po + 5, 6, po + 5, 13], fill=(255, 214, 150, 255))
+
+    # 2 keycard — magnetic stripe, gold chip and a diagonal clearance band
+    # instead of three flat rectangles (keycard_blue — entities/items/
+    # ItemDatabase.js, core/Locks.js).
+    ko = 2 * 16
+    at(2, 2, 4, 13, 12, P["conc_l"])
+    at(2, 2, 4, 13, 5, P["ash"])
+    at(2, 3, 8, 6, 10, P["amber"])
+    di.line([ko + 4, 11, ko + 5, 11], fill=P["rust_d"])          # chip pin, below the chip, not through it
+    di.line([ko + 8, 8, ko + 12, 11], fill=P["glow"], width=1)
+    di.point((ko + 12, 8), P["bone"])
+
     # 3 notebook
     at(3, 4, 3, 12, 13, (150, 140, 118, 255)); at(3, 3, 3, 4, 13, P["rust_d"]); at(3, 6, 6, 11, 6, P["ash"]); at(3, 6, 9, 10, 9, P["ash"])
-    # 4 battery
-    at(4, 5, 4, 10, 13, P["conc"]); at(4, 6, 3, 9, 4, P["conc_l"]); at(4, 6, 8, 9, 12, P["amber"])
-    # 5 canteen
-    at(5, 4, 5, 11, 14, (86, 96, 92, 255)); at(5, 6, 2, 9, 5, P["conc_l"]); at(5, 5, 8, 10, 11, P["sludge_l"])
-    # 6 scrap
-    at(6, 3, 6, 12, 10, P["conc_l"]); at(6, 5, 4, 9, 6, P["rust"]); at(6, 6, 10, 11, 12, P["rust_d"])
+    # bent page corner + a thin hanging bookmark ribbon, close to the right
+    # edge so it doesn't cut across the existing text lines.
+    no = 3 * 16
+    di.polygon([(no + 10, 3), (no + 12, 3), (no + 12, 5)], fill=(170, 160, 138, 255))
+    di.line([no + 11, 3, no + 11, 14], fill=P["rust"], width=1)
+
+    # 4 battery — beveled terminal nub, a charge stripe with a gloss edge
+    # and a bottom ridge line instead of three flat rectangles. Also the
+    # base shape scrip/audio_recording tint over (ItemDatabase.js) — see
+    # ui/ItemIcon.js iconTint — so it stays a plausible "small sealed
+    # device" silhouette rather than something battery-literal enough to
+    # look wrong recoloured as a coin or a recorder.
+    bo = 4 * 16
+    at(4, 6, 2, 9, 4, P["conc_d"])              # terminal nub
+    at(4, 4, 4, 11, 13, P["conc_d"])             # casing (reads as a border once the lighter body sits inside it)
+    at(4, 5, 5, 10, 12, P["conc"])               # body
+    at(4, 6, 6, 9, 10, P["amber"])               # charge stripe, inset so the casing border stays visible
+    di.line([bo + 6, 6, bo + 6, 10], fill=(255, 200, 130, 255))   # gloss edge on the stripe
+    di.point((bo + 5, 7), P["conc_l"]); di.point((bo + 5, 9), P["conc_l"])   # casing ridge ticks
+    di.point((bo + 7, 5), P["bone"])
+
+    # 5 canteen — rounded flask body, liquid level with a surface glint,
+    # a neck/cap and a strap-loop hint instead of three flat rectangles.
+    co = 5 * 16
+    di.ellipse([co + 3, 5, co + 12, 14], fill=(86, 96, 92, 255))
+    di.ellipse([co + 3, 9, co + 12, 14], fill=P["sludge_l"])
+    di.line([co + 4, 9, co + 11, 9], fill=(150, 190, 176, 255))
+    at(5, 6, 2, 9, 5, P["conc_l"])
+    at(5, 5, 1, 10, 2, P["conc_d"])
+    di.line([(co + 3, 6), (co + 2, 8)], fill=P["conc_d"], width=1)
+    di.line([co + 5, 6, co + 5, 13], fill=(120, 132, 128, 255))
+
+    # 6 scrap — overlapping jagged shards with rust texture and an edge
+    # highlight instead of a clean rectangle stack.
+    sc = 6 * 16
+    di.polygon([(sc + 3, 10), (sc + 7, 4), (sc + 10, 6), (sc + 6, 12)], fill=P["conc_l"])
+    di.polygon([(sc + 7, 8), (sc + 12, 5), (sc + 13, 9), (sc + 9, 12)], fill=P["conc"])
+    di.polygon([(sc + 4, 9), (sc + 8, 11), (sc + 6, 14), (sc + 3, 13)], fill=P["rust"])
+    di.point((sc + 5, 7), P["rust_d"]); di.point((sc + 10, 7), P["rust_d"]); di.point((sc + 7, 11), P["ash"])
+    di.line([(sc + 3, 10), (sc + 7, 4)], fill=P["bone"])
+
     # 7 unknown / fallback
     at(7, 3, 3, 12, 12, P["conc_d"]); at(7, 4, 4, 11, 11, P["ash"]); at(7, 7, 5, 8, 8, P["glow"]); at(7, 7, 9, 8, 10, P["glow"])
+    # 8 key — a real bow-and-teeth silhouette for lock/key items (Locks.js)
+    kx = 8 * 16
+    di.ellipse([kx + 3, 2, kx + 9, 8], outline=P["amber"], width=2)
+    di.rectangle([kx + 8, 6, kx + 9, 12], fill=P["amber"])
+    di.rectangle([kx + 8, 10, kx + 12, 11], fill=P["amber"])
+    di.rectangle([kx + 8, 12, kx + 11, 13], fill=P["amber"])
+    # 9 folded letter — for readable notes/letters/documents (readable())
+    lx = 9 * 16
+    at(9, 3, 4, 12, 12, (150, 140, 118, 255))
+    di.line([lx + 3, 4, lx + 7, 8], fill=(110, 100, 82, 255))
+    di.line([lx + 12, 4, lx + 8, 8], fill=(110, 100, 82, 255))
+    di.line([lx + 3, 4, lx + 12, 4], fill=(180, 168, 142, 255))
+    # wax seal — one more accent for a touch more personality.
+    di.ellipse([lx + 10, 8, lx + 13, 11], fill=P["rust_d"])
+    di.point((lx + 11, 9), P["rust"])
+
+    # 10 combat knife — angled blade + wrapped grip, its own silhouette
+    # instead of the tinted-scrap shape every weapon used to share.
+    kx = 10 * 16
+    di.polygon([(kx + 5, 12), (kx + 11, 3), (kx + 13, 4), (kx + 8, 13)], fill=P["bone"])
+    di.line([(kx + 5, 12), (kx + 11, 3)], fill=P["conc_l"])
+    di.line([(kx + 3, 14), (kx + 6, 11)], fill=P["rust"], width=2)
+    di.point((kx + 3, 13), P["rust_d"])
+    # 11 service pistol — side profile: slide, barrel, grip
+    px_ = 11 * 16
+    di.rectangle([px_ + 3, 5, px_ + 12, 8], fill=P["conc_l"])
+    di.rectangle([px_ + 3, 5, px_ + 12, 6], fill=(94, 106, 110, 255))
+    di.rectangle([px_ + 11, 6, px_ + 13, 7], fill=P["conc_d"])
+    di.polygon([(px_ + 5, 9), (px_ + 9, 9), (px_ + 8, 14), (px_ + 6, 14)], fill=(58, 46, 36, 255))
+    di.line([(px_ + 6, 10), (px_ + 6, 13)], fill=(78, 62, 48, 255))
+    # 12 patrol rifle — long barrel, stock and a magazine hanging down
+    rx = 12 * 16
+    di.rectangle([rx + 1, 6, rx + 14, 7], fill=P["conc_l"])
+    di.rectangle([rx + 1, 6, rx + 14, 6], fill=(94, 106, 110, 255))
+    di.rectangle([rx + 2, 8, rx + 6, 12], fill=(58, 46, 36, 255))
+    di.rectangle([rx + 9, 8, rx + 12, 9], fill=P["conc"])
+    di.polygon([(rx + 9, 9), (rx + 11, 9), (rx + 10, 13), (rx + 9, 13)], fill=P["conc_d"])
+    # 13 riot shotgun — wide double-barrel, wood stock, pump grip
+    sx = 13 * 16
+    di.rectangle([sx + 1, 5, sx + 12, 6], fill=P["rust_d"])
+    di.rectangle([sx + 1, 7, sx + 12, 8], fill=P["rust_d"])
+    di.rectangle([sx + 1, 5, sx + 2, 8], fill=(60, 32, 18, 255))
+    di.rectangle([sx + 4, 9, sx + 7, 10], fill=(58, 46, 36, 255))
+    di.polygon([(sx + 8, 9), (sx + 14, 9), (sx + 14, 13), (sx + 10, 13)], fill=(98, 74, 48, 255))
+    # 14 ammo box — open case with three brass-tipped rounds showing
+    ax = 14 * 16
+    at(14, 3, 6, 12, 13, (70, 60, 46, 255))
+    at(14, 3, 6, 12, 7, (96, 82, 62, 255))
+    for rx0 in (5, 7.5, 10):
+        rx0 = int(rx0)
+        di.rectangle([ax + rx0, 3, ax + rx0 + 1, 7], fill=P["amber"])
+        di.point((ax + rx0, 2), P["bone"])
+        di.point((ax + rx0 + 1, 2), P["bone"])
+    # 15 frag grenade — segmented body, pin and spoon lever
+    gx = 15 * 16
+    di.ellipse([gx + 4, 6, gx + 12, 14], fill=P["moss_d"])
+    di.ellipse([gx + 5, 7, gx + 9, 11], fill=P["moss"])
+    di.line([gx + 4, 10, gx + 12, 10], fill=(30, 40, 32, 255))
+    di.line([gx + 8, 10, gx + 4, 6], fill=(30, 40, 32, 255))
+    di.rectangle([gx + 7, 2, gx + 9, 6], fill=P["conc_l"])
+    di.line([gx + 9, 3, gx + 12, 1], fill=P["amber"], width=1)
+
+    # 16 flashlight — cylindrical body, wider lens head with a lit-amber
+    # lens and a soft light cone, tail cap and switch nub, so it reads
+    # distinctly from every other tool silhouette on the sheet.
+    fx = 16 * 16
+    di.polygon([(fx + 13, 4), (fx + 15, 1), (fx + 15, 13), (fx + 13, 10)], fill=(224, 164, 88, 55))
+    at(16, 2, 7, 3, 9, P["conc_d"])                              # tail cap
+    at(16, 3, 6, 10, 10, P["conc_l"])                             # body
+    di.rectangle([fx + 3, 6, fx + 10, 7], fill=(158, 168, 166, 255))  # top highlight
+    di.rectangle([fx + 6, 4, fx + 7, 5], fill=P["ash"])           # switch nub
+    at(16, 10, 5, 13, 11, P["conc_d"])                            # lens head
+    di.ellipse([fx + 11, 6, fx + 13, 10], fill=P["amber"])        # lit lens
+    di.point((fx + 12, 7), P["bone"])
+
+    # Everything below used to share one of the base shapes above via
+    # iconTint (see ui/ItemIcon.js) — a recolour standing in for real art.
+    # One dedicated silhouette per item now; ItemDatabase.js's iconTint on
+    # each of these is gone, the colour is baked into the art itself.
+
+    # 17 bandage roll — off-white gauze wrap with a loose end and a blood spot.
+    bo = 17 * 16
+    at(17, 4, 4, 11, 12, (232, 226, 214, 255))
+    di.line([bo + 4, 6, bo + 11, 6], fill=(200, 192, 176, 255))
+    di.line([bo + 4, 9, bo + 11, 9], fill=(200, 192, 176, 255))
+    di.polygon([(bo + 11, 10), (bo + 14, 11), (bo + 13, 13), (bo + 10, 12)], fill=(232, 226, 214, 255))
+    di.ellipse([bo + 5, 5, bo + 7, 7], fill=P["wound"])
+
+    # 18 scavenger helmet — dented dome with a chin strap.
+    ho = 18 * 16
+    di.ellipse([ho + 3, 3, ho + 12, 10], fill=(90, 100, 88, 255))
+    di.rectangle([ho + 3, 8, ho + 12, 10], fill=(60, 68, 58, 255))
+    di.line([ho + 5, 10, ho + 5, 13], fill=(40, 44, 38, 255), width=1)
+    di.line([ho + 10, 10, ho + 10, 13], fill=(40, 44, 38, 255), width=1)
+    di.point((ho + 9, 5), (140, 150, 136, 255))
+    di.point((ho + 7, 4), P["rust_d"])
+
+    # 19 shelter logbook — metal-ring binder with a tabbed page, distinct
+    # from the personal notebook (3) and the folded letter (9).
+    lo = 19 * 16
+    at(19, 4, 3, 12, 13, (74, 84, 70, 255))
+    for ry in (4, 6, 8, 10, 12):
+        di.point((lo + 4, ry), P["conc_l"]); di.point((lo + 5, ry), P["conc_l"])
+    at(19, 7, 5, 11, 11, (150, 156, 138, 255))
+    di.line([lo + 7, 7, lo + 11, 7], fill=(90, 96, 82, 255))
+    di.line([lo + 7, 9, lo + 11, 9], fill=(90, 96, 82, 255))
+    at(19, 11, 6, 12, 7, P["amber"])
+
+    # 20 lucky charm — a gem pendant on a string.
+    ch = 20 * 16
+    di.line([ch + 8, 2, ch + 8, 6], fill=(90, 90, 90, 255))
+    di.ellipse([ch + 5, 6, ch + 11, 13], fill=P["eye_violet"])
+    di.ellipse([ch + 6, 7, ch + 10, 11], fill=(200, 170, 224, 255))
+    di.point((ch + 7, 8), P["bone"])
+    di.point((ch + 8, 3), (60, 60, 60, 255))
+
+    # 21 power cell — the flashlight's battery (dedicated, was a tinted
+    # share of icon 4). Same design as the earlier icon-4 rework.
+    ce = 21 * 16
+    at(21, 6, 2, 9, 4, P["conc_d"])
+    at(21, 4, 4, 11, 13, P["conc_d"])
+    at(21, 5, 5, 10, 12, P["conc"])
+    at(21, 6, 6, 9, 10, P["amber"])
+    di.line([ce + 6, 6, ce + 6, 10], fill=(255, 200, 130, 255))
+    di.point((ce + 5, 7), P["conc_l"]); di.point((ce + 5, 9), P["conc_l"])
+    di.point((ce + 7, 5), P["bone"])
+
+    # 22 scrip — a small stack of stamped coins.
+    cn = 22 * 16
+    di.ellipse([cn + 4, 9, cn + 11, 13], fill=(180, 140, 70, 255))
+    di.ellipse([cn + 4, 7, cn + 11, 11], fill=P["amber"])
+    di.ellipse([cn + 4, 5, cn + 11, 9], fill=(224, 180, 110, 255))
+    di.line([cn + 5, 6, cn + 10, 6], fill=(255, 220, 160, 255))
+    di.point((cn + 7, 7), (150, 110, 55, 255))
+
+    # 23 audio recorder — handheld dictaphone with twin tape reels.
+    ar = 23 * 16
+    at(23, 4, 5, 12, 12, (60, 64, 66, 255))
+    at(23, 4, 5, 12, 6, (84, 90, 92, 255))
+    di.ellipse([ar + 5, 7, ar + 8, 10], fill=P["ash"])
+    di.ellipse([ar + 9, 7, ar + 12, 10], fill=P["ash"])
+    di.point((ar + 6, 8), (140, 150, 148, 255)); di.point((ar + 10, 8), (140, 150, 148, 255))
+    at(23, 5, 11, 7, 11, P["eye_red"])
+
+    # 24 ration tin — a can with a pull-ring lid and a paper label band.
+    tn = 24 * 16
+    at(24, 4, 6, 11, 13, (150, 156, 148, 255))
+    at(24, 4, 6, 11, 7, (180, 186, 178, 255))
+    di.ellipse([tn + 5, 5, tn + 10, 7], fill=(120, 126, 118, 255))
+    di.line([tn + 7, 5, tn + 9, 4], fill=P["conc_l"], width=1)
+    at(24, 5, 9, 10, 9, P["rust"])
+
+    # 25 canteen — dedicated to purified_water now (was shared with the
+    # ration tin above via iconTint); water-blue fill instead of sludge.
+    wa = 25 * 16
+    di.ellipse([wa + 3, 5, wa + 12, 14], fill=(86, 96, 92, 255))
+    di.ellipse([wa + 3, 9, wa + 12, 14], fill=P["water"])
+    di.line([wa + 4, 9, wa + 11, 9], fill=(180, 220, 236, 255))
+    at(25, 6, 2, 9, 5, P["conc_l"])
+    at(25, 5, 1, 10, 2, P["conc_d"])
+    di.line([(wa + 3, 6), (wa + 2, 8)], fill=P["conc_d"], width=1)
+    di.line([wa + 5, 6, wa + 5, 13], fill=(140, 170, 190, 255))
+
+    # 26 scrap metal — dedicated (was shared by nine different items via
+    # iconTint). Overlapping jagged shards with rust texture.
+    sc = 26 * 16
+    di.polygon([(sc + 3, 10), (sc + 7, 4), (sc + 10, 6), (sc + 6, 12)], fill=P["conc_l"])
+    di.polygon([(sc + 7, 8), (sc + 12, 5), (sc + 13, 9), (sc + 9, 12)], fill=P["conc"])
+    di.polygon([(sc + 4, 9), (sc + 8, 11), (sc + 6, 14), (sc + 3, 13)], fill=P["rust"])
+    di.point((sc + 5, 7), P["rust_d"]); di.point((sc + 10, 7), P["rust_d"]); di.point((sc + 7, 11), P["ash"])
+    di.line([(sc + 3, 10), (sc + 7, 4)], fill=P["bone"])
+
+    # 27 stale bread — a scored loaf.
+    br = 27 * 16
+    di.ellipse([br + 3, 6, br + 12, 13], fill=(196, 158, 100, 255))
+    for sx_ in (5, 7, 9):
+        di.line([br + sx_, 7, br + sx_ - 1, 9], fill=(150, 116, 64, 255))
+    di.point((br + 6, 11), (222, 190, 140, 255))
+
+    # 28 plated vest — a torso silhouette with a chest plate and rivet.
+    ve = 28 * 16
+    di.polygon([(ve + 5, 3), (ve + 11, 3), (ve + 12, 13), (ve + 4, 13)], fill=(70, 78, 74, 255))
+    di.polygon([(ve + 5, 3), (ve + 11, 3), (ve + 11, 6), (ve + 5, 6)], fill=(90, 98, 94, 255))
+    di.rectangle([ve + 6, 7, ve + 10, 9], fill=P["conc_l"])
+    di.line([ve + 8, 3, ve + 8, 13], fill=(50, 56, 52, 255))
+    di.point((ve + 6, 8), P["conc_d"])
+
+    # 29 padded gloves — a visibly separate pair (a dark gap between them,
+    # not just two similar-toned shapes touching) with finger and cuff seams.
+    gl = 29 * 16
+    di.polygon([(gl + 3, 5), (gl + 7, 4), (gl + 7, 10), (gl + 3, 11)], fill=(140, 108, 68, 255))
+    di.line([gl + 5, 5, gl + 5, 9], fill=(96, 72, 44, 255))
+    at(29, 3, 10, 7, 11, (96, 72, 44, 255))
+    di.point((gl + 3, 6), (166, 130, 84, 255))
+    di.polygon([(gl + 9, 4), (gl + 13, 5), (gl + 13, 11), (gl + 9, 10)], fill=(140, 108, 68, 255))
+    di.line([gl + 11, 5, gl + 11, 9], fill=(96, 72, 44, 255))
+    at(29, 9, 10, 13, 11, (96, 72, 44, 255))
+    di.point((gl + 13, 6), (166, 130, 84, 255))
+
+    # 30 worn boots — a pair, laces on each shaft.
+    bt = 30 * 16
+    di.rectangle([bt + 4, 3, bt + 7, 10], fill=P["conc"])
+    di.polygon([(bt + 4, 10), (bt + 8, 10), (bt + 8, 13), (bt + 3, 13)], fill=P["conc_d"])
+    di.rectangle([bt + 9, 3, bt + 12, 10], fill=(60, 70, 74, 255))
+    di.polygon([(bt + 9, 10), (bt + 13, 10), (bt + 12, 13), (bt + 8, 13)], fill=(44, 52, 56, 255))
+    di.line([bt + 4, 5, bt + 7, 5], fill=P["conc_l"])
+    di.line([bt + 9, 5, bt + 12, 5], fill=(84, 95, 99, 255))
+
+    # 31 spike trap kit — a folded strip of angled spikes.
+    sp = 31 * 16
+    at(31, 3, 9, 12, 12, (60, 64, 58, 255))
+    for sx_ in (4, 6, 8, 10):
+        di.polygon([(sp + sx_, 9), (sp + sx_ + 1, 4), (sp + sx_ + 2, 9)], fill=P["conc_l"])
+    di.point((sp + 5, 5), P["bone"])
+
+    # 32 electric trap kit — a coiled wire housing with a live spark.
+    el = 32 * 16
+    at(32, 4, 8, 11, 12, (50, 56, 58, 255))
+    di.ellipse([el + 5, 3, el + 10, 8], outline=(90, 100, 102, 255), width=1)
+    di.polygon([(el + 7, 3), (el + 9, 6), (el + 7, 6), (el + 9, 9)], fill=P["water"])
+    di.point((el + 6, 9), P["water"])
+
+    # 33 explosive trap kit — a pressure-plate mine with an armed light.
+    ex = 33 * 16
+    di.ellipse([ex + 4, 7, ex + 11, 13], fill=(46, 50, 44, 255))
+    di.ellipse([ex + 6, 6, ex + 9, 9], fill=P["rust"])
+    di.point((ex + 7, 7), P["eye_red"])
+    for sx_ in (5, 10):
+        di.line([ex + sx_, 7, ex + sx_, 10], fill=(30, 32, 28, 255))
+
+    # 34 alarm trap kit — a tripwire bell.
+    al = 34 * 16
+    di.ellipse([al + 5, 5, al + 10, 10], fill=P["amber"])
+    di.rectangle([al + 7, 3, al + 8, 5], fill=P["conc_l"])
+    di.point((al + 7, 7), P["ash"])
+    di.line([al + 3, 11, al + 12, 11], fill=(200, 200, 200, 150))
+    di.point((al + 3, 11), P["bone"]); di.point((al + 12, 11), P["bone"])
+
+    # 35 pistol ammo — a short stubby round.
+    pa = 35 * 16
+    di.rectangle([pa + 6, 4, pa + 9, 10], fill=(196, 166, 100, 255))
+    di.polygon([(pa + 6, 4), (pa + 9, 4), (pa + 8, 2), (pa + 7, 2)], fill=P["amber"])
+    di.line([pa + 6, 7, pa + 9, 7], fill=(150, 124, 70, 255))
+    di.rectangle([pa + 6, 10, pa + 9, 11], fill=(120, 98, 54, 255))
+
+    # 36 rifle ammo — a longer, pointed round with a cannelure ring.
+    ra = 36 * 16
+    di.rectangle([ra + 6, 2, ra + 9, 11], fill=(196, 166, 100, 255))
+    di.polygon([(ra + 6, 2), (ra + 9, 2), (ra + 7, 0), (ra + 8, 0)], fill=(150, 80, 60, 255))
+    di.line([ra + 6, 9, ra + 9, 9], fill=(150, 124, 70, 255))
+    di.rectangle([ra + 6, 11, ra + 9, 12], fill=(120, 98, 54, 255))
+
+    # 37 shotgun shell — a red plastic hull over a brass base.
+    sh = 37 * 16
+    di.rectangle([sh + 5, 4, sh + 10, 9], fill=(196, 85, 63, 255))
+    di.rectangle([sh + 5, 9, sh + 10, 11], fill=(196, 166, 100, 255))
+    di.line([sh + 5, 6, sh + 10, 6], fill=(230, 120, 100, 255))
+    di.ellipse([sh + 6, 10, sh + 9, 11], fill=(150, 124, 70, 255))
+
     ic.save(os.path.join(ROOT, "ui", "items_placeholder.png"))
 
 
 def build_hud_icons():
-    """Segmented HUD icons — heart / ration / water-droplet, each with
-    empty/half/full states, for HUD.js's Minecraft-style meters (segments,
-    not continuous bars). 3 rows (type) x 3 cols (state) of 8x8 cells."""
+    """Segmented HUD icons — heart / ration / water-droplet / armor-shield /
+    flashlight-battery, each with empty/half/full states, for HUD.js's
+    Minecraft-style meters (segments, not continuous bars) and
+    InventoryUI.js's armor + battery readouts. 5 rows (type) x 3 cols
+    (state) of 8x8 cells."""
     cw = ch = 8
-    img = Image.new("RGBA", (cw * 3, ch * 3), P["clear"])
+    img = Image.new("RGBA", (cw * 3, ch * 5), P["clear"])
     d = ImageDraw.Draw(img)
 
     def stamp(row, col, shape, main, dim, halfable):
@@ -798,8 +1319,27 @@ def build_hud_icons():
             (1, 3), (2, 3), (3, 3), (4, 3), (5, 3), (6, 3),
             (1, 4), (2, 4), (3, 4), (4, 4), (5, 4), (6, 4),
             (2, 5), (3, 5), (4, 5), (5, 5)]
+    # heater-shield outline — flat top, tapering to a point, for the armor
+    # meter (InventoryUI.js renderArmorMeter()).
+    shield = [(1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0),
+              (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1),
+              (1, 2), (2, 2), (3, 2), (4, 2), (5, 2), (6, 2),
+              (1, 3), (2, 3), (3, 3), (4, 3), (5, 3), (6, 3),
+              (2, 4), (3, 4), (4, 4), (5, 4),
+              (2, 5), (3, 5), (4, 5), (5, 5),
+              (3, 6), (4, 6)]
 
-    rows = [(heart, P["eye_red"]), (ration, P["amber"]), (drop, P["water"])]
+    # AA-cell battery outline with a narrower terminal nub on top — for
+    # InventoryUI.js's flashlight battery meter (renderBatteryMeter()).
+    battery = [(3, 0), (4, 0),
+               (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1),
+               (1, 2), (2, 2), (3, 2), (4, 2), (5, 2), (6, 2),
+               (1, 3), (2, 3), (3, 3), (4, 3), (5, 3), (6, 3),
+               (1, 4), (2, 4), (3, 4), (4, 4), (5, 4), (6, 4),
+               (1, 5), (2, 5), (3, 5), (4, 5), (5, 5), (6, 5),
+               (1, 6), (2, 6), (3, 6), (4, 6), (5, 6), (6, 6)]
+
+    rows = [(heart, P["eye_red"]), (ration, P["amber"]), (drop, P["water"]), (shield, P["steel"]), (battery, P["glow"])]
     for row, (shape, main) in enumerate(rows):
         for col in range(3):
             stamp(row, col, shape, main, P["hud_dim"], halfable=True)
@@ -866,13 +1406,138 @@ def build_portraits():
     print("portraits done")
 
 
+# --------------------------------------------------------------------------
+# CONTAINERS  (openable furniture/storage — entities/Container.js)
+# --------------------------------------------------------------------------
+def build_containers():
+    """One row per container type, 2 columns (closed, open), 16x16 cells —
+    see entities/Container.js CONTAINER_ROW. Every type gets its own body
+    tone and detailing rather than one shape recoloured, same principle the
+    enemy archetypes already follow."""
+    types = ["drawer", "cabinet", "locker", "wardrobe", "cupboard", "chest", "box", "shelf", "nightstand"]
+    cw = ch = 16
+    img = Image.new("RGBA", (cw * 2, ch * len(types)), P["clear"])
+    d = ImageDraw.Draw(img)
+
+    def cell(row, col):
+        return col * cw, row * ch
+
+    def body(row, col, top_c, body_c, shade_c):
+        x, y = cell(row, col)
+        d.rectangle([x + 1, y + 3, x + 14, y + 15], fill=body_c)
+        d.rectangle([x + 1, y + 3, x + 14, y + 5], fill=top_c)
+        d.rectangle([x + 1, y + 13, x + 14, y + 15], fill=shade_c)
+        d.line([x + 1, y + 3, x + 14, y + 3], fill=(255, 255, 255, 40))
+
+    wood = ((110, 84, 62, 255), (90, 68, 48, 255), (68, 50, 36, 255))
+    wood_l = ((150, 118, 82, 255), (120, 92, 64, 255), (90, 68, 48, 255))
+    metal = (P["conc_l"], P["conc"], P["conc_d"])
+    dark_metal = ((90, 100, 104, 255), (70, 80, 84, 255), (48, 56, 60, 255))
+    chest_c = ((132, 92, 52, 255), (108, 74, 42, 255), (80, 54, 30, 255))
+    box_c = ((118, 92, 60, 255), (98, 74, 48, 255), (78, 58, 38, 255))
+
+    palette = {
+        "drawer": wood, "cabinet": metal, "locker": dark_metal, "wardrobe": wood_l,
+        "cupboard": wood, "chest": chest_c, "box": box_c, "shelf": metal, "nightstand": wood,
+    }
+
+    for row, kind in enumerate(types):
+        top_c, body_c, shade_c = palette[kind]
+
+        # closed
+        body(row, 0, top_c, body_c, shade_c)
+        x0, y0 = cell(row, 0)
+        if kind in ("drawer", "nightstand"):
+            for dy in (7, 11):
+                d.line([x0 + 2, y0 + dy, x0 + 13, y0 + dy], fill=shade_c)
+                d.rectangle([x0 + 6, y0 + dy - 1, x0 + 9, y0 + dy], fill=top_c)
+        elif kind in ("cabinet", "wardrobe", "cupboard"):
+            d.line([x0 + 7, y0 + 5, x0 + 7, y0 + 15], fill=shade_c)
+            d.rectangle([x0 + 5, y0 + 9, x0 + 6, y0 + 10], fill=top_c)
+            d.rectangle([x0 + 9, y0 + 9, x0 + 10, y0 + 10], fill=top_c)
+        elif kind == "locker":
+            for lx in (4, 7, 10):
+                d.line([x0 + lx, y0 + 6, x0 + lx, y0 + 12], fill=shade_c)
+            d.rectangle([x0 + 6, y0 + 9, x0 + 9, y0 + 10], fill=top_c)
+        elif kind == "chest":
+            d.rectangle([x0 + 1, y0 + 3, x0 + 14, y0 + 7], fill=top_c)
+            d.rectangle([x0 + 6, y0 + 7, x0 + 9, y0 + 8], fill=P["amber"])
+        elif kind == "box":
+            d.line([x0 + 1, y0 + 3, x0 + 7, y0 + 8], fill=shade_c)
+            d.line([x0 + 14, y0 + 3, x0 + 8, y0 + 8], fill=shade_c)
+        elif kind == "shelf":
+            for dy in (6, 9, 12):
+                d.line([x0 + 1, y0 + dy, x0 + 14, y0 + dy], fill=top_c)
+
+        # open — a dark cut-out plus a glint so the silhouette unmistakably
+        # reads as "opened" rather than a palette swap of the same shape
+        body(row, 1, top_c, body_c, shade_c)
+        x1, y1 = cell(row, 1)
+        d.rectangle([x1 + 3, y1 + 5, x1 + 12, y1 + 14], fill=P["ash"])
+        d.rectangle([x1 + 4, y1 + 6, x1 + 11, y1 + 13], fill=(10, 12, 14, 255))
+        d.point((x1 + 6, y1 + 9), P["glow"])
+        d.point((x1 + 9, y1 + 10), P["amber"])
+        if kind in ("cabinet", "wardrobe", "cupboard", "locker"):
+            d.line([x1 + 3, y1 + 5, x1 + 2, y1 + 15], fill=shade_c)
+            d.line([x1 + 12, y1 + 5, x1 + 13, y1 + 15], fill=shade_c)
+        if kind in ("drawer", "nightstand"):
+            d.rectangle([x1 + 2, y1 + 12, x1 + 13, y1 + 16], fill=body_c)
+            d.rectangle([x1 + 2, y1 + 12, x1 + 13, y1 + 13], fill=top_c)
+
+    img.save(os.path.join(ROOT, "sprites", "containers_placeholder.png"))
+    print("containers done")
+
+
+# --------------------------------------------------------------------------
+# PHONE  (fixed save-point object — entities/Phone.js)
+# --------------------------------------------------------------------------
+def build_phone():
+    """Standalone wall payphone — the game's only manual-save trigger. Single
+    16x24 frame; the screen's breathing glow is animated at runtime
+    (Phone.js render()) rather than baked into extra sheet frames, the same
+    trick build_containers()'s loot glints use."""
+    w, h = 16, 24
+    img = Image.new("RGBA", (w, h), P["clear"])
+    d = ImageDraw.Draw(img)
+
+    # booth frame
+    d.rectangle([2, 2, 13, 23], fill=P["conc_l"])
+    d.rectangle([2, 2, 13, 4], fill=P["steel_hi"])
+    d.rectangle([2, 20, 13, 23], fill=P["conc_d"])
+    d.line([2, 2, 2, 23], fill=P["conc"])
+    d.line([13, 2, 13, 23], fill=P["conc_d"])
+
+    # glass panel
+    d.rectangle([4, 5, 11, 14], fill=P["glass"])
+    d.line([4, 5, 11, 5], fill=(255, 255, 255, 60))
+
+    # screen (baked-in "off" tone; the runtime glow overlay lights it up)
+    d.rectangle([6, 8, 9, 11], fill=P["glow"])
+
+    # keypad
+    d.rectangle([5, 15, 10, 18], fill=P["steel"])
+    for xx in (6, 8):
+        d.point((xx, 16), P["hud_dim"])
+        d.point((xx, 17), P["hud_dim"])
+
+    # handset hanging off its cradle hook, right edge
+    d.line([11, 12, 13, 17], fill=P["shoe"])
+    d.rectangle([12, 16, 14, 19], fill=P["shoe"])
+
+    img.save(os.path.join(ROOT, "sprites", "phone_placeholder.png"))
+    print("phone done")
+
+
 if __name__ == "__main__":
     build_tileset()
     build_characters()
     build_player()
+    build_player_dead()
     build_enemies()
     build_ui()
     build_hud_icons()
     build_font()
     build_portraits()
+    build_containers()
+    build_phone()
     print("art done")

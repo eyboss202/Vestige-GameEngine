@@ -7,7 +7,7 @@ import { t } from '../core/I18n.js';
 import { GameState } from '../core/GameState.js';
 import { SettingsScene } from './SettingsScene.js';
 import { InventoryScene } from './InventoryScene.js';
-import { SaveSlotScene, formatTime } from './SaveSlotScene.js';
+import { formatTime } from './SaveSlotScene.js';
 import { MainMenuScene } from './MainMenuScene.js';
 
 /** Transparent overlay: the world keeps rendering, frozen, underneath. */
@@ -23,10 +23,11 @@ export class PauseScene extends Scene {
   resume() { this.build(); }
 
   build() {
+    // No "Save" entry here on purpose — phones (entities/Phone.js) are the
+    // only way to save, per prompt.txt. Loading/quitting are unaffected.
     this.menu = new MenuList([
       { label: t('pause.resume'), onSelect: () => this.game.scenes.pop() },
       { label: t('pause.inventory'), onSelect: () => this.game.scenes.push(new InventoryScene(this.game)) },
-      { label: t('pause.save'), onSelect: () => this.game.scenes.push(new SaveSlotScene(this.game), { mode: 'save' }) },
       { label: t('pause.settings'), onSelect: () => this.game.scenes.push(new SettingsScene(this.game)) },
       { label: t('pause.quit'), onSelect: () => this.quit() },
     ], { spacing: 16, onCancel: () => this.game.scenes.pop() });

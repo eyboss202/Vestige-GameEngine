@@ -13,8 +13,8 @@ import { hitEntitiesInBox } from '../../core/Combat.js';
 import { Projectile } from '../Projectile.js';
 import { Throwable } from '../Throwable.js';
 import { Notifications } from '../../systems/NotificationSystem.js';
-import { t } from '../../core/I18n.js';
-import { PALETTE } from '../../config/Constants.js';
+import { t, localised } from '../../core/I18n.js';
+import { PALETTE, ARMOR_DEGRADE_PER_HIT } from '../../config/Constants.js';
 
 const SPRINT_MULTIPLIER = 1.7;
 const SPRINT_DRAIN = 28;      // stamina per second
@@ -22,6 +22,31 @@ const SPRINT_RECOVER = 18;
 const ACCEL = 900;            // pixels/s^2 — high enough to feel instant, low
 const FRICTION = 1200;        // enough to avoid the "ice skating" of raw input
 const FACING_ANGLE = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
+
+/** Collapse choreography for startDeath() — see Player.update()/render()'s
+ *  `dying` branch and GameScene's death handling, which sizes its own freeze
+ *  timer off DEATH_TOTAL so the You Died screen only appears once this has
+ *  actually finished playing. */
+const DEATH_TIP_TIME = 0.65;    // falls from standing to flat on the ground
+const DEATH_HOLD_TIME = 0.65;   // beat on the ground before fading
+const DEATH_FADE_TIME = 0.6;    // fades out while the screen washes red/black
+/** GameScene reads this to size the freeze it holds before cutting to
+ *  DeathScene, so the You Died screen only appears once this has actually
+ *  finished playing instead of on its own unrelated timer. */
+export const DEATH_TOTAL = DEATH_TIP_TIME + DEATH_HOLD_TIME + DEATH_FADE_TIME;
+/** How far the sprite tips over, in radians — short of a full 90 degrees so
+ *  it still reads as "collapsed", not "flattened into the floor". */
+const DEATH_TIP_ANGLE = Math.PI * 0.46;
+
+/** Asset key per weapon category — see tools/gen_art.py build_player(),
+ *  which bakes the held item straight onto each sheet's hand pixel. A new
+ *  weapon needs nothing here as long as its category already has a sheet;
+ *  only a new *category* would need one (art + an entry here). Falls back
+ *  to the bare 'player_doctor' sheet when nothing's equipped. */
+const WEAPON_SHEET = {
+  melee: 'player_doctor_melee', pistol: 'player_doctor_pistol',
+  rifle: 'player_doctor_rifle', shotgun: 'player_doctor_shotgun',
+};
 
 export class Player extends Entity {
   constructor({ x, y, facing = 'down' }) {
@@ -35,11 +60,19 @@ export class Player extends Entity {
     this.stepTimer = 0;
     this.sprinting = false;
     this.attackCooldown = 0;
+    this.reloadTimer = 0;
+    /** Set by startDeath() once hp hits 0 — see update()/render()'s `dying`
+     *  branch and GameScene's death handling. */
+    this.dying = false;
+    this.deathElapsed = 0;
 
     this.animator = new Animator(Assets.image('player_doctor'), 16, 24)
       .addDirectional('idle', [0], 1)
       .addDirectional('walk', [0, 1, 2, 3], 8);
     this.animator.play(`idle_${this.facing}`);
+    /** Asset key the animator's sheet currently matches — see
+     *  syncWeaponSheet(). Starts null (bare sheet) same as an empty weapon slot. */
+    this.heldSheet = null;
 
     /** Handheld light. Radius breathes slightly so it never looks static. */
     this.light = { x, y, radius: 68, color: '#cfe6df', intensity: 0.95, flicker: 0.04 };
@@ -47,10 +80,37 @@ export class Player extends Entity {
 
   get stats() { return GameState.player; }
 
+  /** Starts the collapse animation — called once by GameScene on
+   *  `player:down` (hp hit 0). Freezes input immediately; render() does the
+   *  actual tip-over/fade based on deathElapsed. Idempotent so a hit landing
+   *  while it's already playing can't restart it. */
+  startDeath() {
+    if (this.dying) return;
+    this.dying = true;
+    this.deathElapsed = 0;
+    this.canMove = false;
+    this.vx = this.vy = 0;
+    // Bloodied corpse variant for the collapse — same clip/frame grid as
+    // every other sheet, so renderDeath()'s already-playing animation just
+    // keeps going on different art with no other change needed.
+    this.animator.image = Assets.image('player_doctor_dead');
+  }
+
   update(dt, scene) {
+    if (this.dying) {
+      this.deathElapsed += dt;
+      if (this.flashTimer > 0) this.flashTimer -= dt;
+      // The lantern gutters out along with them rather than just vanishing
+      // the instant control freezes — one less thing that reads as a glitch.
+      this.light.intensity = Math.max(0, 0.95 * (1 - this.deathElapsed / DEATH_TOTAL));
+      scene.lighting.addDynamic(this.light);
+      return;
+    }
     super.update(dt, scene);
     if (this.invulnerable > 0) this.invulnerable -= dt;
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
+    if (this.reloadTimer > 0) this.reloadTimer -= dt;
+    this.syncWeaponSheet();
 
     const axis = this.canMove && this.stunTimer <= 0 ? Input.axis() : { x: 0, y: 0 };
     const moving = axis.x !== 0 || axis.y !== 0;
@@ -109,17 +169,54 @@ export class Player extends Entity {
     return { x: this.x + dx, y: this.y - 4 + dy };
   }
 
-  /** Uses whatever's in the 'weapon' equip slot. No-op (with a denial cue) if empty. */
-  attack(scene) {
-    if (this.attackCooldown > 0 || this.stunTimer > 0) return;
+  /** Currently equipped weapon item + its data/weapons.js archetype, or nulls. */
+  weaponHeld() {
     const weaponItemId = GameState.equipment.get('weapon');
     const itemDef = weaponItemId && getItem(weaponItemId);
     const weapon = itemDef?.weaponId ? getWeapon(itemDef.weaponId) : null;
+    return { weaponItemId, itemDef, weapon };
+  }
+
+  /** Swaps the animator onto the sheet matching whatever's equipped — see
+   *  WEAPON_SHEET — the instant it changes, so the held item is just part of
+   *  the body texture again rather than a separately composited icon. Clips
+   *  (rows/columns) are identical across every sheet, so only the underlying
+   *  image needs to change; the current clip/frame/timer carry over untouched. */
+  syncWeaponSheet() {
+    const { weapon } = this.weaponHeld();
+    const sheet = weapon ? WEAPON_SHEET[weapon.category] ?? null : null;
+    if (sheet === this.heldSheet) return;
+    this.heldSheet = sheet;
+    this.animator.image = Assets.image(sheet ?? 'player_doctor');
+  }
+
+  /** Refuses a broken weapon with a denial cue; @returns true if it's usable. */
+  checkDurability(weaponItemId, itemDef) {
+    const max = itemDef.durability?.max;
+    if (!max || GameState.getDurability(weaponItemId, max) > 0) return true;
+    Audio.playSfx('ui_back', { volume: 0.5 });
+    Notifications.push(t('notify.broken', { name: localised(itemDef.name) }));
+    return false;
+  }
+
+  /** Chips one use of durability off, surfacing a one-time "just broke" toast. */
+  wearWeapon(weaponItemId, itemDef, amount = 1) {
+    const max = itemDef.durability?.max;
+    if (!max) return;
+    const { broke } = GameState.damageDurability(weaponItemId, amount, max);
+    if (broke) Notifications.push(t('notify.broken', { name: localised(itemDef.name) }));
+  }
+
+  /** Uses whatever's in the 'weapon' equip slot. No-op (with a denial cue) if empty. */
+  attack(scene) {
+    if (this.attackCooldown > 0 || this.stunTimer > 0 || this.reloadTimer > 0) return;
+    const { weaponItemId, itemDef, weapon } = this.weaponHeld();
     if (!weapon || weapon.category === 'throwable') {
       Audio.playSfx('ui_back', { volume: 0.5 });
       Notifications.push(t('notify.noWeapon'));
       return;
     }
+    if (!this.checkDurability(weaponItemId, itemDef)) { this.attackCooldown = 0.2; return; }
     this.attackCooldown = weapon.cooldown;
 
     if (weapon.category === 'melee') {
@@ -129,17 +226,22 @@ export class Player extends Entity {
       hitEntitiesInBox(scene, box, weapon.damage, { sourceFaction: 'player', source: this, type: 'melee' });
       Audio.playSfx('attack_melee');
       scene.particles.burst(point.x, point.y, 6, { color: PALETTE.bone, speed: 36, life: 0.22 });
+      this.wearWeapon(weaponItemId, itemDef);
       return;
     }
 
-    // Ranged: pistol / rifle / shotgun, all just differently-shaped Projectile bursts.
-    if (weapon.ammoType && !GameState.inventory.has(weapon.ammoType, 1)) {
+    // Ranged: pistol / rifle / shotgun. Fires from the weapon's own magazine
+    // (GameState.weaponAmmo) — reload() is what pulls from the inventory
+    // reserve, not the shot itself. See systems/InventorySystem.js ammo items.
+    const magazineSize = weapon.magazineSize ?? Infinity;
+    const clip = GameState.getWeaponAmmo(weaponItemId, magazineSize);
+    if (clip <= 0) {
       Audio.playSfx('ui_back', { volume: 0.5 });
       Notifications.push(t('notify.noAmmo'));
-      this.attackCooldown = 0.15;   // short cooldown so finding ammo doesn't feel locked out
+      this.attackCooldown = 0.15;   // short cooldown so reloading doesn't feel locked out
       return;
     }
-    if (weapon.ammoType) GameState.inventory.remove(weapon.ammoType, 1);
+    GameState.setWeaponAmmo(weaponItemId, clip - 1);
 
     const baseAngle = FACING_ANGLE[this.facing] ?? 0;
     const { pellets = 1, spread = 0, speed, life } = weapon.projectile;
@@ -151,6 +253,39 @@ export class Player extends Entity {
       }));
     }
     Audio.playSfx('attack_gun');
+    this.wearWeapon(weaponItemId, itemDef);
+  }
+
+  /** Manually tops the equipped weapon's magazine off the inventory's ammo
+   *  reserve. No-op (with a denial cue) if there's nothing to gain from it. */
+  reload() {
+    if (this.stunTimer > 0 || this.reloadTimer > 0) return;
+    const { weaponItemId, itemDef, weapon } = this.weaponHeld();
+    if (!weapon?.ammoType || !weapon.magazineSize) {
+      Audio.playSfx('ui_back', { volume: 0.4 });
+      return;
+    }
+    if (!this.checkDurability(weaponItemId, itemDef)) return;
+
+    const clip = GameState.getWeaponAmmo(weaponItemId, weapon.magazineSize);
+    if (clip >= weapon.magazineSize) {
+      Notifications.push(t('notify.magFull'));
+      Audio.playSfx('ui_back', { volume: 0.4 });
+      return;
+    }
+    const reserve = GameState.inventory.quantity(weapon.ammoType);
+    if (reserve <= 0) {
+      Notifications.push(t('notify.noAmmoReserve'));
+      Audio.playSfx('ui_back', { volume: 0.5 });
+      return;
+    }
+    const taken = Math.min(weapon.magazineSize - clip, reserve);
+    GameState.inventory.remove(weapon.ammoType, taken);
+    GameState.setWeaponAmmo(weaponItemId, clip + taken);
+    this.reloadTimer = weapon.reloadTime ?? 0.9;
+    this.attackCooldown = Math.max(this.attackCooldown, this.reloadTimer);
+    Audio.playSfx('reload', { volume: 0.6 });
+    Notifications.push(t('notify.reloaded', { clip: clip + taken, reserve: GameState.inventory.quantity(weapon.ammoType) }));
   }
 
   /** Throws the first throwable-category item in the bag (grenades, ...). */
@@ -177,8 +312,13 @@ export class Player extends Entity {
 
   takeDamage(amount, source, scene) {
     if (this.invulnerable > 0) return false;
-    // Armor chips damage down but never fully zeroes it out.
-    const mitigated = Math.max(1, amount - GameState.derivedStat('armor'));
+    // Armor chips damage down (never fully zeroing it out) and is itself
+    // consumed by being hit — see config/Constants.js ARMOR_DEGRADE_PER_HIT
+    // and core/GameState.js refreshArmor(), which is what tops the pool back
+    // up whenever the equipped total changes.
+    const armor = GameState.player.armor;
+    const mitigated = Math.max(1, amount - armor);
+    if (armor > 0) GameState.player.armor = Math.max(0, armor - ARMOR_DEGRADE_PER_HIT);
     this.stats.hp = Math.max(0, this.stats.hp - mitigated);
     this.invulnerable = 0.9;
     this.flashTimer = 0.25;
@@ -197,9 +337,49 @@ export class Player extends Entity {
   }
 
   render(renderer, camera) {
+    if (this.dying) { this.renderDeath(renderer, camera); return; }
     // Blink while invulnerable.
     if (this.invulnerable > 0 && Math.floor(this.invulnerable * 16) % 2 === 0) return;
+    // The held item is baked into the current sheet (see syncWeaponSheet()),
+    // so drawing the body is drawing the weapon — no separate compositing
+    // pass, and so no more "draw behind for this facing" special-casing either.
     super.render(renderer, camera);
+  }
+
+  /** Collapse animation for startDeath() — tips the sprite over around the
+   *  feet (an ease-out rotation, so it lands hard rather than gliding down),
+   *  settles a couple pixels into the ground, holds, then fades. No new art:
+   *  a canvas transform on the existing walk sheet reads perfectly well as
+   *  "fell down" at this resolution. */
+  renderDeath(renderer, camera) {
+    const ctx = renderer.ctx;
+    const sx = Math.round(this.x - camera.renderX);
+    const sy = Math.round(this.y - camera.renderY);
+    const t = this.deathElapsed;
+
+    const fadeStart = DEATH_TIP_TIME + DEATH_HOLD_TIME;
+    const fade = t < fadeStart ? 1 : Math.max(0, 1 - (t - fadeStart) / DEATH_FADE_TIME);
+    if (fade <= 0) return;
+
+    const tipT = Math.min(1, t / DEATH_TIP_TIME);
+    const eased = 1 - Math.pow(1 - tipT, 3);   // fast start, settles into the fall
+    const angle = eased * DEATH_TIP_ANGLE;
+    const sink = eased * 3;
+
+    if (this.shadow) {
+      ctx.fillStyle = `rgba(0,0,0,${0.32 * fade})`;
+      ctx.beginPath();
+      ctx.ellipse(sx, sy - 1, this.hitbox.w / 2 + 1, 2.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (!this.animator) return;
+
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.translate(sx, sy - sink);
+    ctx.rotate(angle);
+    this.animator.draw(ctx, -this.spriteW / 2, -this.spriteH);
+    ctx.restore();
   }
 }
 
