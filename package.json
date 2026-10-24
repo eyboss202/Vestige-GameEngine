@@ -1,0 +1,33 @@
+{
+  "name": "vestige-engine",
+  "version": "1.0.0",
+  "description": "A dependency-free, data-driven engine for top-down pixel-art action RPGs, written in plain JavaScript (ES modules + Canvas 2D). Ships with VESTIGE, a playable sample game.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "author": "eyboss202",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eyboss202/vestige.git"
+  },
+  "homepage": "https://eyboss202.github.io/vestige/",
+  "keywords": [
+    "game-engine",
+    "javascript",
+    "canvas",
+    "pixel-art",
+    "top-down",
+    "rpg",
+    "survival-horror",
+    "no-dependencies",
+    "es-modules"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "test": "node --test tests/",
+    "check": "node tools/check-imports.mjs && node --test tests/"
+  }
+}

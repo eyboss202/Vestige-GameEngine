@@ -6,7 +6,7 @@ Everything produced here is a labelled PLACEHOLDER. Replace the PNGs in
 import os, random
 from PIL import Image, ImageDraw, ImageFont
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "assets")
+ROOT = os.path.join(os.path.dirname(__file__), "..", "game", "assets")
 
 P = {
     "void":      (7, 9, 11, 255),
@@ -308,7 +308,7 @@ def _draw_held_item(px, held, dr, hx, hy, fx):
     tiny and inside the sprite's own 16px width (no separate overlay, no
     hand-offset heuristics at runtime): this *is* the held-item art, part of
     the same texture as the arm that's holding it, so it inherits the walk
-    cycle's bob/swing for free. `held` is a data/weapons.js category."""
+    cycle's bob/swing for free. `held` is a game/data/weapons.js category."""
     # Bright, saturated tones on purpose — the dark coat/belt already occupy
     # this part of the frame, so a held item drawn in a close, muted tone
     # (concrete grey against a near-black coat) just disappears at gameplay
@@ -346,7 +346,7 @@ def draw_char(d, ox, oy, direction, frame, pal, held=None):
     Accessories (glasses/beard/backpack/patches) are opt-in via boolean keys
     on `pal` so this stays the one place a walk-cycle silhouette is drawn —
     see build_characters(): only the player's palette sets them. `held` (a
-    data/weapons.js category, or None) bakes a held-item glyph onto the hand
+    game/data/weapons.js category, or None) bakes a held-item glyph onto the hand
     — see build_player_holding() — instead of Player.js compositing a
     separate floating icon at runtime.
     """
@@ -566,7 +566,7 @@ def build_player_dead():
 # --------------------------------------------------------------------------
 # ENEMIES — one distinct silhouette per archetype instead of a recolored
 # zombie. Sheets stay 16x24, 4 cols x 4 rows (down/left/right/up, idle-step-
-# idle-step) so core/Animation.js needs no changes; data/enemies.js just
+# idle-step) so core/Animation.js needs no changes; game/data/enemies.js just
 # points each archetype's `sprite` key at one of these files.
 # --------------------------------------------------------------------------
 def _frame_helpers(d, ox, oy, direction):
@@ -710,7 +710,7 @@ def draw_brute(d, ox, oy, direction, frame):
     of bone spikes down the back, old scars crossing the chest, a
     permanently drooling maw and a snapped restraint still cuffed to one
     wrist (something kept this contained, once). Reads as dangerous mass
-    before the runtime `scale` even enlarges it further (data/enemies.js)."""
+    before the runtime `scale` even enlarges it further (game/data/enemies.js)."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 3 + bob
@@ -783,7 +783,7 @@ def draw_stalker(d, ox, oy, direction, frame):
 def draw_spitter(d, ox, oy, direction, frame):
     """Bloated acid sac where a torso should be, its membrane mottled and
     laced with veins, drooling a thin trail of caustic drool. Holds range
-    and lobs Projectiles (behavior: 'ranged' in data/enemies.js) instead of
+    and lobs Projectiles (behavior: 'ranged' in game/data/enemies.js) instead of
     closing in."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
@@ -855,7 +855,7 @@ def draw_sentinel(d, ox, oy, direction, frame):
     rune-like amber markings tracing down the torso, an asymmetric spur on
     one shoulder, clawed oversized hands, a tattered cloak-shadow trailing
     off the shoulders from behind. The widest frame here even before
-    `unique: true` (data/enemies.js) applies the biggest scale of the set."""
+    `unique: true` (game/data/enemies.js) applies the biggest scale of the set."""
     px, rc, mirror, dr = _frame_helpers(d, ox, oy, direction)
     bob = 1 if frame in (1, 3) else 0
     top = 1 + bob
@@ -931,7 +931,7 @@ def build_ui():
     dc.polygon([(0, 1), (3, 4), (0, 7)], fill=P["bone"])
     car.save(os.path.join(ROOT, "ui", "caret_placeholder.png"))
 
-    # item icons, 16x16 grid — 38 cells. Every item in ItemDatabase.js gets
+    # item icons, 16x16 grid — 38 cells. Every item in game/data/items.js gets
     # its own dedicated cell now; nothing on the sheet is shared and
     # recoloured with iconTint anymore (see ui/ItemIcon.js).
     ITEM_ICON_COLS = 38
@@ -970,7 +970,7 @@ def build_ui():
 
     # 2 keycard — magnetic stripe, gold chip and a diagonal clearance band
     # instead of three flat rectangles (keycard_blue — entities/items/
-    # ItemDatabase.js, core/Locks.js).
+    # game/data/items.js, core/Locks.js).
     ko = 2 * 16
     at(2, 2, 4, 13, 12, P["conc_l"])
     at(2, 2, 4, 13, 5, P["ash"])
@@ -989,7 +989,7 @@ def build_ui():
 
     # 4 battery — beveled terminal nub, a charge stripe with a gloss edge
     # and a bottom ridge line instead of three flat rectangles. Also the
-    # base shape scrip/audio_recording tint over (ItemDatabase.js) — see
+    # base shape scrip/audio_recording tint over (game/data/items.js) — see
     # ui/ItemIcon.js iconTint — so it stays a plausible "small sealed
     # device" silhouette rather than something battery-literal enough to
     # look wrong recoloured as a coin or a recorder.
@@ -1101,7 +1101,7 @@ def build_ui():
 
     # Everything below used to share one of the base shapes above via
     # iconTint (see ui/ItemIcon.js) — a recolour standing in for real art.
-    # One dedicated silhouette per item now; ItemDatabase.js's iconTint on
+    # One dedicated silhouette per item now; game/data/items.js's iconTint on
     # each of these is gone, the colour is baked into the art itself.
 
     # 17 bandage roll — off-white gauze wrap with a loose end and a blood spot.

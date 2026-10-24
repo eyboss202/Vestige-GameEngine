@@ -1,166 +1,425 @@
-# VESTIGE — foundation build
+<div align="center">
 
-A top-down pixel-art game skeleton in plain HTML, CSS and JavaScript (Canvas 2D, ES modules).
-No build step, no framework, no dependencies.
+# Vestige Engine
 
-This is **not a game**. It is the scaffolding a game gets built on: rendering, input, camera,
-collision, maps, entities, dialogue, inventory, saves, audio, UI and menus, all wired together and
-working, with placeholder content everywhere the story will eventually go.
+**A dependency-free engine for top-down pixel-art action RPGs, written in plain JavaScript.**
 
-**Nothing here defines the setting's plot.** The world reads as an abandoned research facility and
-the grounds outside it; every line of text is explicitly marked as a placeholder.
+ES modules + Canvas 2D. No framework, no bundler, no `npm install`, nothing to build.<br>
+It ships with **VESTIGE**, a playable survival-horror sample game built entirely on top of it.
+
+[![CI](https://github.com/eyboss202/vestige/actions/workflows/ci.yml/badge.svg)](https://github.com/eyboss202/vestige/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-7fe0a8.svg)](LICENSE)
+![Dependencies: 0](https://img.shields.io/badge/dependencies-0-7fe0a8.svg)
+![JavaScript](https://img.shields.io/badge/JavaScript-ES2022-e0a458.svg?logo=javascript&logoColor=white)
+![Build step: none](https://img.shields.io/badge/build_step-none-6b7876.svg)
+
+[**▶ Play the demo**](https://eyboss202.github.io/vestige/) &nbsp;·&nbsp;
+[Quick start](#quick-start) &nbsp;·&nbsp;
+[Make your own game](#make-your-own-game) &nbsp;·&nbsp;
+[Architecture](#architecture) &nbsp;·&nbsp;
+[Extending guide](docs/EXTENDING.md)
+
+<img src="docs/media/gameplay.gif" alt="VESTIGE gameplay: the player shoots a husk and a spitter in the courtyard, both drop loot, then reloads" width="768">
+
+</div>
 
 ---
 
-## Running it
+## Highlights
 
-ES modules and `fetch()` do not work from `file://`. Serve the folder over HTTP:
+- **A real engine/game split.** Everything under `engine/` is content-agnostic; a game hands over its
+  data once with `defineGame()` and never edits engine code. CI fails the build if the engine ever
+  imports game code.
+- **Zero dependencies, zero build.** ~7,000 lines of hand-written engine code that runs straight
+  from the source files in any modern browser. `git clone` and serve the folder — that's the setup.
+- **Data-driven everything.** Maps, items, weapons, enemies, loot tables, shops, dialogue trees and
+  cutscenes are plain JSON/JS objects. New content is new data, not new code.
+- **Pixel-perfect rendering.** The whole game draws into a 384×216 buffer and is upscaled with
+  nearest-neighbour, so the pixel grid never breaks at any window size.
+- **Deterministic simulation.** A fixed 60 Hz timestep with an accumulator — physics behaves the same
+  on a 60 Hz laptop and a 240 Hz monitor.
+- **Tested without a browser.** The engine's systems run headless in Node: 49 tests cover inventory,
+  saves and migrations, dialogue, collision, loot, locks, localisation — plus a content lint that
+  checks every cross-reference in the sample game.
+
+## Table of contents
+
+- [Quick start](#quick-start)
+- [Feature tour](#feature-tour)
+- [Make your own game](#make-your-own-game)
+- [Architecture](#architecture)
+- [Project structure](#project-structure)
+- [Testing and CI](#testing-and-ci)
+- [Asset pipeline](#asset-pipeline)
+- [Roadmap](#roadmap)
+- [License and credits](#license-and-credits)
+
+---
+
+## Quick start
+
+ES modules and `fetch()` don't work from `file://`, so the folder has to be served over HTTP.
+With Node 18+ (no packages are installed):
 
 ```bash
+git clone https://github.com/eyboss202/vestige.git
 cd vestige
-python3 -m http.server 8080
-# then open http://localhost:8080
+npm start            # zero-dependency dev server on http://localhost:8080
 ```
 
-Any static server works (`npx serve`, `php -S localhost:8080`, VS Code Live Server, nginx).
+Or with anything else that serves static files:
+
+```bash
+python3 -m http.server 8080
+```
+
+Then open <http://localhost:8080>. Sound starts after the first key press — browsers require a user
+gesture before a page may play audio.
 
 ### Controls
 
-| Action | Keys |
+| Action | Keys | | Action | Keys |
+| --- | --- | --- | --- | --- |
+| Move | Arrows / WASD | | Attack | J |
+| Sprint | Shift | | Throw | K |
+| Interact | E / Z / Enter | | Reload | R |
+| Confirm | Z / Enter / Space | | Inventory | I / C |
+| Cancel | X / Esc | | Drop (in inventory) | G |
+| Pause | Esc / P | | Debug overlay | F1 |
+| Fullscreen | F11 | | | |
+
+Every action is rebindable in **Settings → Controls**, and the bindings persist.
+
+---
+
+## Feature tour
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/media/dialogue.png" alt="Dialogue box with portrait and speaker name"></td>
+    <td width="50%"><img src="docs/media/inventory.png" alt="Grid inventory with equipment, armor and battery meters"></td>
+  </tr>
+  <tr>
+    <td><b>Dialogue</b> — branching trees driven by world flags, choices with requirements, portraits, and a typewriter with inline <code>[shake]</code> <code>[wave]</code> <code>[c=#hex]</code> tags.</td>
+    <td><b>Inventory &amp; equipment</b> — stacking, categories, weight, rarity borders, durability, seven equipment slots feeding derived stats.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/lab.png" alt="Dark interior lit by the player's flashlight"></td>
+    <td><img src="docs/media/debug.png" alt="F1 debug overlay showing hitboxes and entity state"></td>
+  </tr>
+  <tr>
+    <td><b>Lighting</b> — per-map darkness with radial light cut-outs, coloured additive glow, flicker, vignette and a battery-powered flashlight indoors.</td>
+    <td><b>Debug overlay (F1)</b> — collision grid, hitboxes, hurtboxes, entity count, FPS and the current AI state, live.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/readable.png" alt="A readable note rendered as a full book-style page"></td>
+    <td><img src="docs/media/shop.png" alt="Merchant shop screen with prices and currency"></td>
+  </tr>
+  <tr>
+    <td><b>Readables</b> — notes, logs and recordings reuse the dialogue machinery but render as a full book-styled page.</td>
+    <td><b>Trading</b> — per-merchant stock and prices, buying and selling, built on an ordinary currency item.</td>
+  </tr>
+</table>
+
+<details>
+<summary><b>Full feature list</b></summary>
+
+#### Core
+- **Game loop** — fixed-timestep simulation (60 Hz) with uncapped rendering, frame-time clamping and
+  spiral-of-death protection.
+- **Scene stack** — menus push on top of the world and mark themselves transparent, so a paused game
+  keeps rendering underneath. Fades between scenes are built in.
+- **Event bus** — systems talk through `Events.emit('enemy:died')`, not references, so any of them can
+  be replaced wholesale.
+- **Renderer** — 384×216 off-screen buffer, integer or fill scaling, screen shake, flashes, vignette,
+  scanlines.
+- **Camera** — frame-rate-independent smoothing, map-bound clamping, shake, cutscene control.
+- **Input** — an action layer (`Input.justPressed('attack')`) over fully rebindable keys.
+
+#### World
+- **Tile maps** from Tiled-shaped JSON: ground/decor/overhead layers, a collision grid, triggers,
+  named spawn points, lights and per-map ambience.
+- **Portals** between maps, optionally locked behind a world flag and/or a key item.
+- **Triggers** — anything that isn't a portal is emitted as `trigger:<type>`; `reveal` (camera pan +
+  line) and `ambush` (wake nearby enemies) ship as worked examples.
+- **Y-sorted entities** anchored at their feet, with axis-separated collision that slides along walls.
+
+#### Gameplay
+- **Player** — acceleration/friction movement, sprint with stamina, footsteps, knockback, i-frames,
+  and the equipped weapon drawn in hand.
+- **Enemies** — an idle/patrol/chase/return/hurt state machine, a ranged variant that keeps its
+  distance and fires, armor and per-damage-type resistances, positional voices and loot drops.
+  Seven archetypes ship, each with distinct art and audio.
+- **Combat** — melee hitboxes, pistols, rifles, shotguns (spread), thrown grenades and four trap types,
+  all on one shared damage/targeting path. Magazines with manual reload and weapon durability.
+- **Survival** — hunger, thirst and injuries (bleeding) with passive regeneration, tuned entirely from
+  data. Segmented, animated HUD rows instead of bars.
+- **NPCs** — wander, talk, trade, or follow a daily schedule driven by the in-game clock.
+- **Containers, locks and keys** — one data-driven container class (drawers, lockers, chests…),
+  partial looting, and locks shared by doors and containers.
+- **Loot** — five rarity tiers and weighted drop tables.
+
+#### Narrative
+- **Dialogue trees** — flag branches, gated choices, flag writes and event emits from any node.
+- **Cutscenes** — a step queue (`wait`, `moveTo`, `camera`, `cameraFollow`, `dialogue`, `flag`,
+  `emit`, `fade`, `sfx`, `music`, `anim`) that pauses play the way a conversation does.
+
+#### Persistence and settings
+- **Saves** — three slots in `localStorage`, a versioned envelope with forward migrations, slot
+  previews, and persistent world state: killed enemies, taken pickups, dropped items, looted
+  containers, opened locks. Saving is done at in-world phones, by design.
+- **Settings** — volumes, fullscreen, scaling, text speed, screen shake, FPS counter, language and key
+  bindings, persisted the moment they change.
+- **Localisation** — English and Portuguese for both UI and content; games can override or add
+  strings without touching the engine.
+
+#### Audio
+- Web Audio graph with master/music/SFX buses, cross-faded music, positional (panned and attenuated)
+  sound effects, and a chase stinger that takes over while something is hunting the player.
+
+</details>
+
+---
+
+## Make your own game
+
+A game is a folder with an entry module that calls `defineGame()`. This is the complete contract —
+the sample game's [`game/main.js`](game/main.js) is the same thing with more content:
+
+```js
+import { defineGame, Game, BootScene, Cutscene } from '../engine/index.js';
+import { MANIFEST } from './manifest.js';            // image/sound/music/map paths
+import { ITEMS } from './data/items.js';
+
+defineGame({
+  baseUrl: new URL('./', import.meta.url),         // manifest paths resolve from here
+  config: {
+    id: 'my-game',                                  // namespaces saves and settings
+    title: 'MY GAME',
+    startMap: 'village',
+    menuMusic: 'theme',
+    currency: 'gold',
+    player: { sprite: 'hero', stats: { maxHp: 30, hp: 30 } },
+    onNewGame: (scene) => Cutscene.play([{ type: 'dialogue', id: 'opening' }]),
+  },
+  manifest: MANIFEST,
+  items: ITEMS,
+  weapons: { /* ... */ },
+  enemies: { /* ... */ },
+  dialogue: { /* ... */ },
+  lootTables: { /* ... */ },
+  shops: { /* ... */ },
+  locales: { en: { 'menu.subtitle': 'a tiny adventure' } },
+  palette: { glow: '#ffd166' },                     // re-theme the engine's UI
+});
+
+const game = new Game(document.getElementById('game'));
+game.start(new BootScene(game));
+```
+
+Content stays declarative. An item is a plain object, and behaviour comes from small helpers:
+
+```js
+import { readable, placeTrap } from '../../engine/index.js';
+
+export const ITEMS = {
+  medkit: {
+    id: 'medkit', icon: 0, category: 'consumable', stackSize: 5, consumable: true,
+    name: { en: 'Medkit', pt: 'Kit medico' },
+    onUse: ({ state }) => {
+      if (state.player.hp >= state.derivedStat('maxHp')) return false;   // refuse: keep the item
+      state.player.hp += 10;
+      return true;
+    },
+  },
+  old_letter: { id: 'old_letter', icon: 9, category: 'quest', onUse: readable('old_letter') },
+  spike_kit:  { id: 'spike_kit', icon: 31, category: 'trap', consumable: true, onUse: placeTrap('spike', 7) },
+};
+```
+
+New entity types plug into maps without touching the loader:
+
+```js
+import { Maps } from '../engine/index.js';
+Maps.registerEntityType('chest', (def) => new Chest(def));   // now usable as { "type": "chest" } in map JSON
+```
+
+Every `config` key and its default is documented in [`engine/core/Content.js`](engine/core/Content.js),
+and [`docs/EXTENDING.md`](docs/EXTENDING.md) has step-by-step recipes for maps, items, enemies,
+weapons, dialogue, cutscenes, shops, traps, containers, languages, screens and save-format changes.
+
+<details>
+<summary><b>Asset keys the engine's built-in UI expects</b></summary>
+
+The engine's menus, HUD and built-in entities draw from these manifest keys. A missing asset is
+logged and skipped, never fatal — but supplying them is what makes the built-in UI look right.
+
+| Kind | Keys |
 | --- | --- |
-| Move | Arrows / WASD |
-| Confirm | Z / Enter / Space |
-| Cancel | X / Escape |
-| Interact | E / Z / Enter |
-| Sprint | Shift |
-| Attack | J |
-| Throw | K |
-| Reload | R |
-| Drop (in inventory) | G |
-| Inventory | I / C |
-| Pause | Escape / P |
-| Debug overlay | F1 |
-| Fullscreen | F11 |
+| Images | `font_main` (7×12 ASCII bitmap font), `ui_panel` (9-slice), `ui_caret`, `ui_items` (16×16 icon strip), `hud_icons`, `portraits` (32×32 strip), `tileset` (16×16 tiles), `containers`, `phone` |
+| Sounds | `ui_move`, `ui_select`, `ui_back`, `text_blip`, `pickup`, `hurt`, `footstep`, `door`, `attack_melee`, `attack_gun`, `throw`, `explosion`, `trap`, `reload`, `death_sting` |
 
-All of these are rebindable in **Settings → Controls**. Audio only starts after the first key press
-— browsers require a user gesture before a page may play sound.
+Character sheets are 16×24 frames in a 4×4 grid: columns are the walk cycle, rows are the facings
+**down, left, right, up**.
+
+</details>
 
 ---
 
-## What is already working
+## Architecture
 
-- **Fixed-timestep loop** (60 Hz simulation, uncapped rendering) with delta time and tab-out protection.
-- **Pixel-perfect renderer**: everything is drawn to a 384×216 buffer and upscaled with nearest-neighbour, so the pixel grid never breaks at any window size. Integer-scale and fill modes both supported.
-- **Post-processing**: per-map darkness with radial light cut-outs, additive coloured lamp glow, flicker, vignette, and a scanline overlay.
-- **Camera** that trails the player with frame-rate-independent smoothing, clamps to map bounds, shakes on impact and has a zoom hook.
-- **Player controller**: acceleration/friction movement, four-direction animation, sprint with stamina, footstep audio and dust, damage with knockback and i-frames.
-- **Tile maps** from JSON, with a collision grid, layered rendering, triggers, spawn points and per-map ambience. Three maps ship (lab, courtyard, a bunker reached from the courtyard), all connected by working, lockable doors.
-- **Entities**: y-sorted drawing, feet-anchored collision, NPCs that wander, keep a schedule or talk, enemies with a patrol/chase/hurt state machine (plus a ranged variant), item pickups, examinable props, openable containers, placeable traps, projectiles and thrown weapons. Seven enemy archetypes each have their own hand-drawn silhouette (`tools/gen_art.py`) — gaunt husks, a boil-studded mutant, a hunched bone-spiked brute, a spindly stalker, a bloated acid-sac spitter, a many-legged swarmling and a three-eyed boss sentinel — not one sprite recolored at runtime.
-- **Dialogue**: data-driven trees with branching on world flags, player choices, portraits, speaker names, paging, a typewriter with inline `[shake]` `[wave]` `[c=#hex]` `[s=]` `[p=]` tags and a skip. The same machinery doubles as readable notes/logs/recordings and merchant shop openers — a readable renders as a book-styled full page (`mode: 'read'`, see `ui/DialogueBox.js`) instead of a speech box.
-- **Cutscenes**: a queued action runner (`wait`/`moveTo`/`camera`/`cameraFollow`/`dialogue`/`flag`/`emit`/`fade`/`sfx`/`music`/`anim`) that pauses play exactly like a conversation does. `scripts/cutscenes/intro.js` is a fully commented template, played once per save.
-- **Survival**: hunger and thirst drain over time, punish neglect with HP loss and a movement penalty, and recover on their own once both are healthy; a generic injury list (bleeding, curable) sits alongside them. The HUD shows all three as Minecraft-style segmented icons (hearts/rations/droplets, original pixel art) that bounce and flash when a segment changes, not continuous bars.
-- **Containers**: drawers/cabinets/lockers/wardrobes/cupboards/chests/boxes/shelves/nightstands are all one data-driven `entities/Container.js`, with open/close art and sound, a loot-transfer screen (`ui/ContainerUI.js`) that takes items into the existing inventory, and partial-loot state that survives a save.
-- **Locks & keys**: shared `core/Locks.js` gates portals and containers alike on a world flag and/or an ordinary inventory key item, with an optional one-time consume; unlocking sticks across a save.
-- **Inventory**: stacking, categories (supplies/gear/materials/ammo/traps/records/keys/currency), weight (opt-in), use-effects defined per item, a grid UI with a detail pane, rarity-coloured names and icon borders, durability where it applies, and dropping a stack back into the world (it's there on reload, too).
-- **Equipment**: weapon/armor/helmet/gloves/boots/accessory slots with passive stat bonuses, read through `GameState.derivedStat()`. An equipped weapon actually shows in the player's hand, oriented per facing and bobbing with the walk cycle.
-- **Armor**: a depleting damage-mitigation pool (`GameState.player.armor`/`maxArmor`), separate from the raw equipment bonus it's filled from. Each hit that connects knocks incoming damage down by the current pool (floored at 1 damage), then chips `ARMOR_DEGRADE_PER_HIT` off the pool itself — once it's at 0, hits land at full damage until new/repaired armor gear is equipped. Visible as its own segmented HUD row (only while any is equipped) and in the inventory screen, and saved/restored like everything else in `GameState`.
-- **Combat**: melee, pistols, rifles, shotguns, throwables and four trap types, all built on one shared damage/targeting path (`core/Combat.js`) that traps, weapons and enemy attacks all share. Ranged weapons carry a real magazine — manual reload pulls from the inventory's ammo reserve, firing doesn't — and weapons/tools wear down with use until they need to be replaced.
-- **Monster audio**: every enemy archetype has its own idle/alert/attack/death voice (`tools/gen_audio.py` `monster_voices()`), played positionally — quieter and panned by direction as the source gets further from the player (`AudioSystem.playPositional`).
-- **Trading**: per-merchant shops with their own stock and prices, buying and selling, built on a plain in-bag currency item.
-- **Loot**: five rarity tiers and weighted drop tables rolled on enemy death.
-- **Saves**: three slots in `localStorage`, versioned envelope with a migration hook. Fixed phone props (`entities/Phone.js`, one per map) are the *only* way to write a save — interacting opens the slot picker in save mode, with a yes/no confirmation before overwriting an occupied slot and a "saved to slot N" toast. Loading is still reachable from the main menu, the pause menu and the death screen.
-- **You Died screen**: hp hitting 0 freezes play briefly, then hands off to a dedicated `DeathScene` (replacing the whole scene stack, so nothing from the failed run keeps ticking) with exactly three choices — load a save, return to the main menu, or quit.
-- **Settings**: volumes, fullscreen, scaling mode, text speed, screen shake, FPS counter, language, and full key rebinding (including attack/throw) — all persisted immediately.
-- **Localisation**: English and Portuguese, both for UI strings and dialogue content.
-- **Menus**: animated title screen, slot picker, pause, settings, inventory, shop — all built from one reusable menu widget and a 9-slice panel.
+```mermaid
+flowchart LR
+    subgraph game["game/ — the sample game (content)"]
+        main["main.js<br/>defineGame()"]
+        data["data/*.js<br/>items · enemies · weapons<br/>dialogue · loot · shops"]
+        maps["maps/*.json"]
+        assets["assets/<br/>sprites · tiles · audio"]
+    end
+
+    subgraph engine["engine/ — content-agnostic"]
+        content["core/Content.js<br/>registry + lookups"]
+        loop["core/Game.js<br/>fixed-step loop"]
+        scenes["SceneManager<br/>scene stack"]
+        systems["systems/<br/>dialogue · inventory · save<br/>audio · lighting · survival<br/>cutscene · loot"]
+        world["world/ + entities/"]
+        ui["ui/<br/>HUD · menus · font"]
+        bus(("Events<br/>bus"))
+        state[("GameState<br/>= save format")]
+    end
+
+    main -->|"defineGame({...})"| content
+    data --> main
+    maps -.->|"fetched via manifest"| world
+    assets -.->|"fetched via manifest"| loop
+    content --> systems & world & ui
+    loop --> scenes --> world & ui
+    systems <--> bus
+    world <--> bus
+    systems --> state
+```
+
+**One loop, many scenes.** `Game` owns the loop and hands each fixed tick to `SceneManager`, which
+keeps a *stack* of scenes. Pausing pushes `PauseScene` over `GameScene` and marks it transparent, so
+the frozen world keeps rendering underneath.
+
+**One seam between engine and game.** `engine/core/Content.js` is the only place content enters the
+engine. Engine modules ask it for `getItem(id)`, `getArchetype(id)`, `Content.dialogue[id]`… and never
+import a data file. [`tools/check-imports.mjs`](tools/check-imports.mjs) enforces this in CI.
+
+**Systems talk through events, not references.** A small pub/sub bus carries `inventory:changed`,
+`enemy:died`, `dialogue:end`, `trigger:<type>`, `shop:open` and friends. A system can be swapped out
+as long as it emits the same events — and a cutscene or quest step is just another listener.
+
+**All mutable playthrough state lives in one object.** `GameState` holds the player, the current map,
+world flags, inventory and equipment. `GameState.serialize()` *is* the save format, so persisting a new
+system means adding one field — plus a migration case so old saves keep loading.
+
+**Position convention.** An entity's `(x, y)` is its *feet* — bottom-centre of the sprite. Depth
+sorting, shadows and collision all follow from that.
+
+**Render order inside a map:** ground → decor → y-sorted entities → particles → overhead →
+lighting → vignette → HUD → dialogue → debug.
 
 ---
 
-## Layout
+## Project structure
 
 ```
 vestige/
-├── index.html              canvas + first-gesture hint, nothing else
-├── styles/main.css         page chrome only; all UI is drawn on the canvas
-├── assets/
-│   ├── sprites/            character sheets (16×24, 4 columns × 4 direction rows), containers, weapons-in-hand
-│   ├── tiles/              16×16 tileset atlas
-│   ├── ui/                 9-slice panel, caret, item icons, portraits
-│   ├── fonts/              7×12 bitmap font atlas (ASCII 32–126)
-│   └── audio/              music, SFX and per-monster voice cues (.wav)
-├── maps/                   map JSON (Tiled-shaped: flat, row-major arrays)
-├── tools/                  Python generators for the placeholder assets
-├── docs/EXTENDING.md       recipes for adding content and systems
-└── scripts/
-    ├── main.js             entry point
-    ├── config/             constants, settings, keybindings, locales, asset manifest
-    ├── core/               loop, renderer, camera, input, scenes, assets, events, state, locks
-    ├── systems/            audio, save, dialogue, inventory, lighting, particles, toasts
-    ├── world/              tile map + map loading
-    ├── entities/           base entity, player, enemies, npc, items, props, containers, traps, projectiles
-    ├── ui/                 bitmap font, 9-slice, menu list, dialogue box, HUD, inventory, container, item icons
-    ├── scenes/             boot, main menu, settings, save slots, game, pause, inventory, shop
-    ├── cutscenes/          scripted cutscenes (see intro.js) — a template per file, played via systems/CutsceneSystem.js
-    └── data/               dialogue trees, item/weapon/enemy/shop/loot definitions, survival tuning
+├── index.html                 canvas + first-gesture hint; loads game/main.js
+├── styles/main.css            page chrome only — all UI is drawn on the canvas
+│
+├── engine/                    THE ENGINE — never imports from game/
+│   ├── index.js               public API: everything a game imports
+│   ├── core/                  loop, renderer, camera, input, scenes, assets, events,
+│   │                          state, collision, combat, locks, i18n, Content registry
+│   ├── systems/               audio, save, dialogue, cutscene, inventory, survival,
+│   │                          lighting, particles, notifications, loot, economy, item effects
+│   ├── world/                 tile map + map loading / entity factory
+│   ├── entities/              player, enemies, NPCs, pickups, props, containers,
+│   │                          traps, projectiles, throwables, save phones
+│   ├── ui/                    bitmap font, 9-slice, menu list, HUD, dialogue box,
+│   │                          inventory, container and item-icon widgets
+│   ├── scenes/                boot, title, settings, save slots, game, pause,
+│   │                          inventory, container, shop, death
+│   └── config/                engine constants, settings, keybindings, UI strings
+│
+├── game/                      VESTIGE — the sample game (pure content)
+│   ├── main.js                defineGame({...}) + start
+│   ├── manifest.js            every image, sound, track and map, by key
+│   ├── data/                  items, weapons, enemies, dialogue, loot, rarity, shops, survival
+│   ├── cutscenes/intro.js     fully commented cutscene template
+│   ├── maps/                  three connected maps (Tiled-shaped JSON)
+│   └── assets/                sprites, tiles, UI, fonts, audio
+│
+├── tests/                     node:test suites (engine + sample-game content lint)
+├── tools/                     dev server, import checker, procedural asset generators
+├── docs/                      EXTENDING.md recipes + README media
+└── .github/workflows/         CI (Node 18/20/22) and GitHub Pages deploy
 ```
 
 ---
 
-## How it fits together
+## Testing and CI
 
-**One loop, many scenes.** `Game` owns the loop and hands each tick to `SceneManager`, which keeps a
-*stack* of scenes. Pausing pushes `PauseScene` on top of `GameScene` and marks itself transparent, so
-the frozen world keeps rendering underneath. Fades between scenes are built into the manager.
-
-**Systems talk through events, not references.** `Events` (a small pub/sub bus) carries things like
-`inventory:changed`, `enemy:died`, `dialogue:end`, `map:loaded`. A system can be replaced wholesale as
-long as it emits the same events.
-
-**All mutable playthrough state lives in one object.** `GameState` holds the player's stats, the
-current map, the world flags, the quest table and the inventory. `GameState.serialize()` *is* the save
-format, so persisting a new system means adding a field there and a line in `deserialize()`.
-
-**Content is data, code is generic.** Maps, dialogue trees, item definitions and enemy archetypes are
-plain objects in `/maps` and `/scripts/data`. `MapManager.ENTITY_FACTORY` is the one place that maps a
-JSON `type` onto a class.
-
-**Position convention:** an entity's `(x, y)` is its **feet** — bottom-centre of the sprite. Depth
-sorting, shadows and tile collision all follow from that, and every subclass assumes it.
-
-**Rendering order** inside a map: ground → decor → entities (y-sorted) → particles → overhead →
-lighting → vignette → dialogue → HUD → debug.
-
----
-
-## Placeholder assets
-
-Every asset is generated by the scripts in `tools/` and named `*_placeholder.*`. They exist so the
-project runs and looks coherent, not because they are good.
+The engine only needs a browser to draw, play sound and read the keyboard — everything else runs
+headless in Node, so it is tested directly with the built-in `node:test` runner:
 
 ```bash
-cd vestige
-python3 tools/gen_art.py      # tileset, characters, portraits, UI, bitmap font  (needs Pillow)
-python3 tools/gen_audio.py    # music and SFX  (stdlib only)
-python3 tools/gen_maps.py     # maps/*.json from readable ASCII layouts
+npm test          # 49 tests
+npm run check     # static import check + tests (what CI runs)
 ```
 
-To replace one: drop a new file in with the same dimensions, and update the path in
-`scripts/config/manifest.js` if the filename changes. Nothing else refers to asset paths.
+| Suite | Covers |
+| --- | --- |
+| `content.test.js` | `defineGame()` merging, lookups and fallbacks, storage namespacing, palette and base-URL handling |
+| `inventory.test.js` | stacking, capacity and weight limits, use/refuse effects, equipment bonuses and the armor pool |
+| `dialogue.test.js` | flag branches, gated choices, event emits, localisation, rich-text tag parsing |
+| `save.test.js` | round-trips, per-game namespaces, kill persistence vs. older saves, migrations, corrupt slots |
+| `systems.test.js` | weighted loot, shop pricing, wall-sliding collision, locale fallback chain, locks and keys |
+| `sample-game.test.js` | every id the sample game references exists: items, weapons, ammo, loot, shops, dialogue nodes, portals, spawn points, manifest files |
 
-Sprite sheets are 4 columns × 4 rows of 16×24: columns are the walk cycle (idle, step, idle, step),
-rows are the facing order **down, left, right, up** (`DIR_ROW` in `config/Constants.js`).
+GitHub Actions runs the import check and the tests on Node 18, 20 and 22 for every push and pull
+request, and a second workflow publishes the playable demo to GitHub Pages.
 
 ---
 
-## Known limits (deliberate)
+## Asset pipeline
 
-These are left as hooks rather than half-implementations:
+Every asset in the sample game is generated procedurally by scripts in `tools/` and named
+`*_placeholder.*` — they exist so the project runs and looks coherent, and are meant to be replaced.
 
-- **No pathfinding.** Enemies (including ranged ones) steer straight at their target and nudge
-  sideways when blocked. Swap `Enemy.moveToward` for A* over the collision grid when maps get complex.
-- **Weapon mods, reputation/factions and quests** have their seats reserved (`weapon.mods`,
-  `GameState.reputation`, `GameState.quests`) but no implementation — see "Things worth building
-  next" in `docs/EXTENDING.md`.
-- **Controller input** has its seat reserved (`Input`'s action layer) but no gamepad polling yet.
+```bash
+python3 tools/gen_art.py      # tileset, characters, enemies, portraits, UI, bitmap font  (needs Pillow)
+python3 tools/gen_audio.py    # music and sound effects                                  (stdlib only)
+python3 tools/gen_maps.py     # game/maps/*.json from readable ASCII layouts
+```
 
-See `docs/EXTENDING.md` for step-by-step recipes.
+`tools/creature-sfx/` holds the synthesiser behind the creature sounds and a browser player to
+audition them. To replace an asset, drop in a file with the same dimensions and update its path in
+`game/manifest.js` if the name changes — nothing else refers to asset paths.
+
+---
+
+## Roadmap
+
+Seams are already reserved for these, so each is an addition rather than a rewrite:
+
+- [ ] **Quest system** on top of world flags and dialogue/cutscene events (`GameState.quests` is reserved)
+- [ ] **A\* pathfinding** over the collision grid (`Enemy.moveToward` is the single swap point)
+- [ ] **Gamepad and touch input** folded into the existing action layer (`Input` is the only key reader)
+- [ ] **Weapon mods** — every weapon already carries an unused `mods: []`
+- [ ] **Reputation and factions** — `GameState.reputation` and `reputationDiscount()` are wired but neutral
+- [ ] **Item repair** via the existing durability read/write API
+- [ ] **Direct Tiled import** — the map JSON is already Tiled-shaped
+- [ ] **Unicode bitmap font** — the placeholder atlas covers ASCII 32–126, so accents are folded today
+
+---
+
+## License and credits
+
+Released under the [MIT License](LICENSE) © 2026 eyboss202.
+
+All art, music and sound effects in the sample game were generated procedurally by the scripts in
+[`tools/`](tools) — no third-party assets are included.

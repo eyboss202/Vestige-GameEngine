@@ -1,0 +1,20 @@
+# Dependencies / tooling (the project itself has none)
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local Claude Code settings
+.claude/
+
+# Logs
+*.log

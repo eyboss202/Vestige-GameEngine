@@ -6,7 +6,7 @@ JSON shape is deliberately Tiled-like: flat layer arrays, row-major.)
 """
 import json, os
 
-OUT = os.path.join(os.path.dirname(__file__), "..", "maps")
+OUT = os.path.join(os.path.dirname(__file__), "..", "game", "maps")
 
 # char -> (ground tile, decor tile or None, solid)
 LEGEND = {

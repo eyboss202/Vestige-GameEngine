@@ -1,8 +1,8 @@
 """Placeholder audio generator for VESTIGE. Pure stdlib, writes 16-bit mono WAV.
-Replace the files in /assets/audio with real music/SFX using the same names."""
+Replace the files in game/assets/audio with real music/SFX using the same names."""
 import math, os, random, struct, wave
 
-OUT = os.path.join(os.path.dirname(__file__), "..", "assets", "audio")
+OUT = os.path.join(os.path.dirname(__file__), "..", "game", "assets", "audio")
 
 
 def write(name, samples, rate):
@@ -302,7 +302,7 @@ def monster_death(name, f0=500, f1=80, dur=0.55, rate=22050, vol=0.24, seed=3, f
 # Per-archetype voice tuning, used only by monster_voices() below — the
 # synthesized fallback (see the __main__ comment above). The actual voices
 # currently shipped for every archetype are real recordings copied in from
-# creature-sfx-16bit/ straight to assets/audio/{id}_{cue}_placeholder.wav:
+# tools/creature-sfx/ straight to assets/audio/{id}_{cue}_placeholder.wav:
 #
 #   husk      idle=growls/growl_loop_01  alert=idle/alert_01      attack=attack/chomp_01        death=death/death_mid_01
 #   mutant    idle=growls/growl_loop_02  alert=idle/alert_02      attack=attack/chomp_02        death=death/death_mid_02
@@ -312,7 +312,7 @@ def monster_death(name, f0=500, f1=80, dur=0.55, rate=22050, vol=0.24, seed=3, f
 #   swarmling idle=idle/chirp_01         alert=screams/screech_02 attack=grunts/grunt_small_02  death=death/death_mid_02
 #   sentinel  idle=roars/roar_mid_02     alert=roars/roar_big_01  attack=roars/roar_big_02      death=death/death_big_02
 #
-# data/enemies.js `voicePitch` (Enemy.js's playback `rate`) adds further
+# game/data/enemies.js `voicePitch` (Enemy.js's playback `rate`) adds further
 # distinctiveness on top of this, especially where two archetypes share a
 # source file (mid-tier deaths only have 3 variants for 5 archetypes).
 #
@@ -498,7 +498,7 @@ if __name__ == "__main__":
     sfx_death_sting("death_sting_placeholder.wav")
     # monster_voices() is NOT called here on purpose: the {archetype}_{idle,
     # alert,attack,death}_placeholder.wav files it would (re)generate are now
-    # real recordings copied in from creature-sfx-16bit/ (see the mapping
+    # real recordings copied in from tools/creature-sfx/ (see the mapping
     # comment above MONSTER_VOICES) — running it would silently overwrite
     # them with the old synthesized placeholders. It's kept as a fallback:
     # copy in real files for a NEW archetype's four cues too, or call
