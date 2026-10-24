@@ -58,7 +58,7 @@ It ships with **VESTIGE**, a playable survival-horror sample game built entirely
 
 ## Quick start
 
-ES modules and `fetch()` don't work from `file://`, so the folder has to be served over HTTP.
+ES modules & `fetch()` don't work from `file://`, so the folder has to be served over HTTP.
 With Node 18+ (no packages are installed):
 
 ```bash
