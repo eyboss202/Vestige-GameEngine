@@ -7,13 +7,13 @@
 ES modules + Canvas 2D. No framework, no bundler, no `npm install`, nothing to build.<br>
 It ships with **VESTIGE**, a playable survival-horror sample game built entirely on top of it.
 
-[![CI](https://github.com/eyboss202/vestige/actions/workflows/ci.yml/badge.svg)](https://github.com/eyboss202/vestige/actions/workflows/ci.yml)
+[![CI](https://github.com/eyboss202/Vestige-GameEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/eyboss202/Vestige-GameEngine/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-7fe0a8.svg)](LICENSE)
 ![Dependencies: 0](https://img.shields.io/badge/dependencies-0-7fe0a8.svg)
 ![JavaScript](https://img.shields.io/badge/JavaScript-ES2022-e0a458.svg?logo=javascript&logoColor=white)
 ![Build step: none](https://img.shields.io/badge/build_step-none-6b7876.svg)
 
-[**▶ Play the demo**](https://eyboss202.github.io/vestige/) &nbsp;·&nbsp;
+[**▶ Play the demo**](https://eyboss202.github.io/Vestige-GameEngine/) &nbsp;·&nbsp;
 [Quick start](#quick-start) &nbsp;·&nbsp;
 [Make your own game](#make-your-own-game) &nbsp;·&nbsp;
 [Architecture](#architecture) &nbsp;·&nbsp;
@@ -62,8 +62,8 @@ ES modules & `fetch()` don't work from `file://`, so the folder has to be served
 With Node 18+ (no packages are installed):
 
 ```bash
-git clone https://github.com/eyboss202/vestige.git
-cd vestige
+git clone https://github.com/eyboss202/Vestige-GameEngine.git
+cd Vestige-GameEngine
 npm start            # zero-dependency dev server on http://localhost:8080
 ```
 
@@ -326,7 +326,7 @@ lighting → vignette → HUD → dialogue → debug.
 ## Project structure
 
 ```
-vestige/
+Vestige-GameEngine/
 ├── index.html                 canvas + first-gesture hint; loads game/main.js
 ├── styles/main.css            page chrome only — all UI is drawn on the canvas
 │

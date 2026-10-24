@@ -8,9 +8,9 @@
   "author": "eyboss202",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eyboss202/vestige.git"
+    "url": "git+https://github.com/eyboss202/Vestige-GameEngine.git"
   },
-  "homepage": "https://eyboss202.github.io/vestige/",
+  "homepage": "https://eyboss202.github.io/Vestige-GameEngine/",
   "keywords": [
     "game-engine",
     "javascript",
@@ -27,7 +27,7 @@
   },
   "scripts": {
     "start": "node tools/serve.mjs",
-    "test": "node --test tests/",
-    "check": "node tools/check-imports.mjs && node --test tests/"
+    "test": "node --test tests/*.test.js",
+    "check": "node tools/check-imports.mjs && node --test tests/*.test.js"
   }
 }

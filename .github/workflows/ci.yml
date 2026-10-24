@@ -20,4 +20,4 @@ jobs:
       - name: Static import check (engine must never import game code)
         run: node tools/check-imports.mjs
       - name: Unit + content tests
-        run: node --test tests/
+        run: node --test tests/*.test.js
